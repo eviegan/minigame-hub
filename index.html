@@ -145,19 +145,22 @@ const getBest  =(g)=>+localStorage.getItem(`best_${g}`)||0;
 
 function makeRectTexture(scene,key,w,h,fill,stroke=0xffffff){
   if(scene.textures.exists(key)) return;
-  const g=scene.add.graphics();
+  const g=scene.make.graphics({add:false});   // <— use make.graphics, not add.graphics
   g.fillStyle(fill,1).fillRoundedRect(0,0,w,h,6);
   g.lineStyle(2,stroke,1).strokeRoundedRect(0,0,w,h,6);
-  g.generateTexture(key,w,h); g.destroy();
+  g.generateTexture(key,w,h);
+  g.destroy();
 }
 function makeEmojiTexture(scene,key,emoji,size=48){
   if(scene.textures.exists(key)) return;
   const c=document.createElement('canvas'); c.width=c.height=size;
-  const x=c.getContext('2d'); x.textAlign='center'; x.textBaseline='middle';
+  const x=c.getContext('2d');
+  x.textAlign='center'; x.textBaseline='middle';
   x.font=`${Math.floor(size*0.9)}px "Apple Color Emoji","Segoe UI Emoji",sans-serif`;
   x.fillText(emoji,size/2,size/2);
   scene.textures.addCanvas(key,c);
 }
+
 
 /* ---------------- Whack-a-Mole (scene-timer free clicks) ---------------- */
 class MoleScene extends Phaser.Scene{
