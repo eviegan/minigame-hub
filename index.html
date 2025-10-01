@@ -8,23 +8,28 @@
   :root { color-scheme: dark; }
   html,body{height:100%;margin:0;background:#090a16;color:#eef4ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
   canvas{display:block;width:100%;height:100%}
-  #menu,#leaderboardOverlay{position:fixed;inset:0;display:none;place-items:center;z-index:5;background:linear-gradient(180deg,#0a0718 0%, #090a16 100%)}
+
+  #menu,#leaderboardOverlay,#starter{position:fixed;inset:0;display:none;place-items:center;z-index:6;background:linear-gradient(180deg,#0a0718 0%, #090a16 100%)}
   .card{width:min(560px,92%);background:#0f1226;border:1px solid #243;border-radius:16px;padding:20px;box-shadow:0 20px 60px #0007;text-align:center}
   .grid{display:grid;gap:12px;margin-top:14px}
   .primary{background:#8a5dff;color:#0a0718;font-weight:800;border:0;padding:12px 16px;border-radius:14px;cursor:pointer;font-size:18px}
   .ghost{background:#1b2040;color:#cfe1ff;border:1px solid #2b325d;padding:10px 14px;border-radius:10px;cursor:pointer;font-size:16px}
-  #hud{position:fixed;right:12px;bottom:12px;background:#0008;backdrop-filter:blur(8px);padding:8px 12px;border-radius:12px;z-index:4}
+  #hud{position:fixed;right:12px;bottom:12px;background:#0008;backdrop-filter:blur(8px);padding:8px 12px;border-radius:12px;z-index:5}
   #hud button{border:0;border-radius:12px;padding:8px 12px;font-weight:700;cursor:pointer}
+
+  .muted{color:#a9b7d8}
   table{width:100%;border-collapse:collapse;margin-top:12px}
   th,td{padding:8px 10px;border-bottom:1px solid #2b325d;text-align:left}
-  .muted{color:#a9b7d8}
-  .comboChip{position:fixed;left:50%;top:68px;transform:translateX(-50%);background:#1b2040;border:1px solid #2b325d;border-radius:999px;padding:6px 12px;font-weight:800;letter-spacing:.4px;display:none;z-index:6}
+
+  .comboChip{position:fixed;left:50%;top:68px;transform:translateX(-50%);background:#1b2040;border:1px solid #2b325d;border-radius:999px;padding:6px 12px;font-weight:800;letter-spacing:.4px;display:none;z-index:7;pointer-events:none}
+  .multBadge{position:fixed;left:50%;top:104px;transform:translateX(-50%);background:#20351a;border:1px solid #2b5d33;border-radius:999px;padding:6px 12px;font-weight:800;display:none;z-index:7;pointer-events:none}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
 </head>
 <body>
   <div id="hud"><button id="claim">Claim reward</button></div>
   <div id="combo" class="comboChip">Combo ×2</div>
+  <div id="mult" class="multBadge">×2 active</div>
 
   <!-- Menu -->
   <div id="menu">
@@ -37,6 +42,19 @@
         <button class="primary" data-mode="wheel">🎡 Spin the Wheel (3/day)</button>
         <button class="ghost" id="openLeaderboard">🏆 Leaderboard</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Starter overlay (per game) -->
+  <div id="starter">
+    <div class="card">
+      <h2 id="startTitle" style="margin:0 0 8px">Ready?</h2>
+      <p class="muted" id="startHint" style="margin:0 0 14px"></p>
+      <div class="grid">
+        <button class="primary" id="startBtn">Start</button>
+        <button class="ghost" id="backBtn">Back</button>
+      </div>
+      <div id="countdown" style="font-size:56px; margin-top:14px; display:none">3</div>
     </div>
   </div>
 
@@ -73,27 +91,24 @@ const Sound = (() => {
     g.gain.linearRampToValueAtTime(vol,t+0.01); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
     o.start(t); o.stop(t+dur+0.02);
   }
-  function chord(freqs=[660,880,1320], dur=0.14, type='sine', vol=0.14) {
-    freqs.forEach((f,i)=>tone(f, dur*(1-0.12*i), type, vol));
-  }
-  function pop(){ tone(1200,0.08,'triangle',0.16); }
-  function click(){ tone(880,0.05,'square',0.1); }
-  function ding(){ chord([660,990,1320],0.16,'sine',0.16); }
-  function boom(){
-    const len=ctx.sampleRate*0.22, buf=ctx.createBuffer(1,len,ctx.sampleRate);
-    const data=buf.getChannelData(0); for(let i=0;i<len;i++){ data[i]=(Math.random()*2-1)*(1-i/len); }
+  function noise(dur=0.25, vol=0.3){
+    const len=ctx.sampleRate*dur, buf=ctx.createBuffer(1,len,ctx.sampleRate);
+    const data=buf.getChannelData(0); for(let i=0;i<len;i++) data[i]=(Math.random()*2-1)*(1-i/len);
     const src=ctx.createBufferSource(); src.buffer=buf;
-    const g=ctx.createGain(); g.gain.value=0.35; src.connect(g); g.connect(ctx.destination); src.start();
-    tone(90,0.2,'sine',0.12);
+    const g=ctx.createGain(); g.gain.value=vol; src.connect(g); g.connect(ctx.destination); src.start();
   }
+  const pop = () => tone(1200,0.08,'triangle',0.16);
+  const click = () => tone(880,0.05,'square',0.1);
+  const ding = () => [660,990,1320].forEach((f,i)=>tone(f,0.12-0.02*i,'sine',0.16));
+  const boom = () => { noise(0.22,0.35); tone(90,0.2,'sine',0.12); };
   return { pop, click, ding, boom };
 })();
 
 /* ------------------------ shared utils ------------------------ */
 const W=()=>innerWidth, H=()=>innerHeight;
 const SETTINGS={
-  rewardThreshold:{ mole:10, catch:12 },
-  mole:{ duration:25, gridSmall:3, gridLarge:4, popEvery:650, upTime:800 }, // s / grid / ms
+  rewardThreshold:{ mole:14, catch:16 },   // target highs to unlock reward
+  mole:{ duration:25, gridSmall:3, gridLarge:4, popEvery:620, upTime:780 }, // s / grid / ms
   wheelDailyLimit:3
 };
 const todayKey=()=>new Date().toISOString().slice(0,10);
@@ -108,9 +123,13 @@ function saveScore(game,value){
     const key=`lb_${game}`; const list=JSON.parse(localStorage.getItem(key)||"[]");
     list.push({score:value,ts:Date.now()}); list.sort((a,b)=>b.score-a.score);
     localStorage.setItem(key,JSON.stringify(list.slice(0,5)));
+    // best
+    const bestKey=`best_${game}`; const best=Math.max(value, +(localStorage.getItem(bestKey)||0));
+    localStorage.setItem(bestKey,best);
   }catch(e){}
 }
 const getScores=(g)=>{try{return JSON.parse(localStorage.getItem(`lb_${g}`)||"[]")}catch(e){return[]}};
+const getBest=(g)=>+localStorage.getItem(`best_${g}`)||0;
 const incSpinCount=()=>localStorage.setItem(`wheel_${todayKey()}`,((+localStorage.getItem(`wheel_${todayKey()}`)||0)+1).toString());
 const getSpinCount=()=>+localStorage.getItem(`wheel_${todayKey()}`)||0;
 
@@ -128,14 +147,42 @@ function makeEmojiTexture(scene,key,emoji,size=48){
   scene.textures.addImage(key,c);
 }
 
-/* ---------- UI combo chip ---------- */
+/* ---------- UI chips ---------- */
 const comboChip = document.getElementById('combo');
-function showCombo(mult){
-  comboChip.textContent = `Combo ×${mult}`;
-  comboChip.style.display='block';
-  comboChip.animate([{transform:'translate(-50%,-4px)'},{transform:'translate(-50%,0)'}],{duration:120});
-}
+const multChip  = document.getElementById('mult');
+function showCombo(mult){ comboChip.textContent=`Combo ×${mult}`; comboChip.style.display='block'; comboChip.animate([{transform:'translate(-50%,-4px)'},{transform:'translate(-50%,0)'}],{duration:120}); }
 function hideCombo(){ comboChip.style.display='none'; }
+function showMult(sec){ multChip.textContent=`×2 active (${sec}s)`; multChip.style.display='block'; }
+function hideMult(){ multChip.style.display='none'; }
+
+/* ------------------------ Start overlay per game ------------------------ */
+let pendingMode=null;
+const starter = document.getElementById('starter');
+const startBtn = document.getElementById('startBtn');
+const backBtn  = document.getElementById('backBtn');
+const startTitle = document.getElementById('startTitle');
+const startHint  = document.getElementById('startHint');
+const countdownEl= document.getElementById('countdown');
+
+function openStarter(mode){
+  pendingMode = mode;
+  startTitle.textContent = mode==='mole' ? 'Whack-a-Mole' :
+                           mode==='catch' ? 'Catch the Coins' : 'Spin the Wheel';
+  startHint.textContent  = mode==='mole' ? 'Tap animals to score. Avoid bombs!' :
+                           mode==='catch' ? 'Move the basket to catch 🪙. Avoid 🧨. Grab ✨ for ×2!' :
+                           'Tap the wheel to spin.';
+  starter.style.display='grid';
+}
+function closeStarter(){ starter.style.display='none'; countdownEl.style.display='none'; }
+
+startBtn.onclick = () => {
+  Sound.click();
+  // 3-2-1
+  countdownEl.style.display='block';
+  let n=3; countdownEl.textContent=n;
+  const iv=setInterval(()=>{ n--; if(n>0){ countdownEl.textContent=n; } else { clearInterval(iv); closeStarter(); start(pendingMode); } }, 700);
+};
+backBtn.onclick = () => { Sound.click(); starter.style.display='none'; showMenu(); };
 
 /* ------------------------ Whack-a-Mole (animals + bomb + combo) ------------------------ */
 class MoleScene extends Phaser.Scene{
@@ -147,7 +194,6 @@ class MoleScene extends Phaser.Scene{
     this.scoreText=this.add.text(20,16,'Score: 0',{fontSize:'20px',color:'#8EFF98'});
     this.timerText=this.add.text(width-20,16,this.timeLeft+'s',{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
 
-    // textures
     makeEmojiTexture(this,'emoji_hamster','🐹',64);
     makeEmojiTexture(this,'emoji_cat','🐱',64);
     makeEmojiTexture(this,'emoji_dog','🐶',64);
@@ -155,7 +201,6 @@ class MoleScene extends Phaser.Scene{
     makeEmojiTexture(this,'emoji_bomb','💣',64);
     makeRectTexture(this,'holePlate',96,28,0x1b2040,0x2b325d);
 
-    // grid
     const cols=(Math.min(width,height)<720)?SETTINGS.mole.gridSmall:SETTINGS.mole.gridLarge;
     const rows=cols;
     const gridW=Math.min(width*0.9,height*0.78);
@@ -172,115 +217,34 @@ class MoleScene extends Phaser.Scene{
         face.on('pointerdown',()=>{
           if(!face.visible)return;
           if(face.getData('type')==='bomb'){
-            // bomb: -2, shake, boom, reset combo
             this.cameras.main.shake(120,0.003); Sound.boom();
             this.score=Math.max(0,this.score-2); this.resetCombo(); hideCombo();
           }else{
-            // animal: +1 * multiplier, pop, combo++
-            const mult = this.bumpCombo(); // returns 1,2,3
-            Sound.pop();
-            this.score += 1*mult;
-            showCombo(mult);
+            const mult=this.bumpCombo(); Sound.pop();
+            this.score += mult; showCombo(mult);
           }
           this.scoreText.setText('Score: '+this.score);
           this.tweens.add({targets:face, y:face.y-12, duration:90, yoyo:true, onComplete:()=>face.setVisible(false)});
-          if(!this.rewarded && this.score>=SETTINGS.rewardThreshold.mole){ this.rewarded=true; toast(this,'🎉 Reward unlocked!'); }
+          if(!this.rewarded && getBest('mole')<SETTINGS.rewardThreshold.mole && this.score>=SETTINGS.rewardThreshold.mole) toast(this,'🎉 Reward unlocked!');
         });
 
         this.holes.push({plate,face});
       }
     }
 
-    // pop logic
     this.popEvt=this.time.addEvent({ delay:SETTINGS.mole.popEvery, loop:true, callback:()=>{
-      const free=this.holes.filter(h=>!h.face.visible);
-      if(!free.length)return;
+      const free=this.holes.filter(h=>!h.face.visible); if(!free.length)return;
       const h=Phaser.Utils.Array.GetRandom(free);
 
       const isBomb=Math.random()<0.18;
       const tex=isBomb ? 'emoji_bomb' : Phaser.Utils.Array.GetRandom(animals);
       h.face.setTexture(tex).setData('type', isBomb ? 'bomb' : 'animal');
       h.face.y=h.plate.y; h.face.setVisible(true);
-      this.tweens.add({targets:h.face,y:h.plate.y-28,duration:120,ease:'Sine.easeOut'});
-
-      this.time.delayedCall(SETTINGS.mole.upTime,()=>{
-        if(h.face.visible){
-          this.tweens.add({targets:h.face,y:h.plate.y+24,duration:160,onComplete:()=>h.face.setVisible(false)});
-        }
-      });
+      this.tweens.add({targets:h.face,y:h.plate.y-28,duration:110,ease:'Sine.easeOut'});
+      this.time.delayedCall(SETTINGS.mole.upTime,()=>{ if(h.face.visible){ this.tweens.add({targets:h.face,y:h.plate.y+24,duration:150,onComplete:()=>h.face.setVisible(false)}); }});
     }});
 
-    // timer
-    this.time.addEvent({delay:1000,loop:true,callback:()=>{
-      this.timeLeft--; this.timerText.setText(this.timeLeft+'s');
-      if(this.timeLeft<=0) this.endGame();
-    }});
-
-    this.input.keyboard.on('keydown-ESC',()=>this.returnToMenu());
-  }
-
-  bumpCombo(){
-    if(this.comboTimer){ this.combo = Math.min(this.combo+1, 9); }
-    else { this.combo = 1; }
-    clearTimeout(this.comboTimer);
-    this.comboTimer = setTimeout(()=>{ this.combo=0; hideCombo(); }, 1500);
-    // multiplier tiers: 1-2 -> x1, 3-4 -> x2, 5+ -> x3
-    return this.combo>=5 ? 3 : this.combo>=3 ? 2 : 1;
-  }
-  resetCombo(){ this.combo=0; clearTimeout(this.comboTimer); this.comboTimer=null; }
-
-  endGame(){
-    this.popEvt?.remove(); this.resetCombo(); hideCombo();
-    this.scene.pause(); saveScore('mole',this.score);
-    const {width,height}=this.scale;
-    const msg=`Time!\nScore: ${this.score}\nClick to return`;
-    const box=this.add.rectangle(width/2,height/2,width*.84,170,0x000000,.7);
-    const txt=this.add.text(width/2,height/2,msg,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
-    [box,txt].forEach(el=>el.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.returnToMenu()));
-  }
-  returnToMenu(){ this.scene.stop(); showMenu(); }
-}
-
-/* ------------------------ Catch the Coins (emoji, full fall, combo + sound) ------------------------ */
-class CatchScene extends Phaser.Scene{
-  constructor(){ super('catch'); this.score=0; this.timeLeft=25; this.rewarded=false; this.combo=0; this.comboTimer=null; }
-  create(){
-    const {width,height}=this.scale;
-    this.cameras.main.setBackgroundColor('#0a0718');
-    this.add.text(width/2,28,'🧺 Catch the Coins',{fontSize:'24px',color:'#fff'}).setOrigin(.5);
-    this.scoreText=this.add.text(20,16,'Score: 0',{fontSize:'20px',color:'#8EFF98'});
-    this.timerText=this.add.text(width-20,16,this.timeLeft+'s',{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
-
-    makeEmojiTexture(this,'emoji_coin','🪙',52);
-    makeRectTexture(this,'basketRect',180,26,0xffd86a);
-
-    this.physics.world.setBounds(0,0,width,height);
-
-    this.basket=this.physics.add.image(width/2,height-60,'basketRect').setImmovable(true);
-    this.basket.body.allowGravity=false;
-
-    this.coins=this.physics.add.group({allowGravity:true, gravityY: 700});
-    this.physics.add.overlap(this.basket,this.coins,(_,coin)=>{
-      const mult=this.bumpCombo();
-      Sound.pop();
-      this.score+=1*mult; this.scoreText.setText('Score: '+this.score); coin.destroy();
-      showCombo(mult);
-      if(!this.rewarded && this.score>=SETTINGS.rewardThreshold.catch){ this.rewarded=true; toast(this,'🎉 Reward unlocked!'); }
-    });
-
-    this.time.addEvent({delay:500,loop:true,callback:()=>{
-      const x=Phaser.Math.Between(40,width-40);
-      const coin=this.physics.add.image(x,-30,'emoji_coin');
-      coin.setBounce(0).setVelocity(0,120).setMaxVelocity(420,1000).setCollideWorldBounds(false);
-      this.coins.add(coin);
-      const flash=this.add.rectangle(x,0,6,30,0xffffff).setAlpha(.7);
-      this.tweens.add({targets:flash,alpha:0,y:60,duration:350,onComplete:()=>flash.destroy()});
-    }});
-
-    this.events.on('update',()=>this.coins.children.iterate(c=>{ if(c&&c.y>height+60)c.destroy(); }));
-
-    this.input.on('pointermove',p=>{ this.basket.x=Phaser.Math.Clamp(p.x,90,width-90); this.basket.body.updateFromGameObject(); });
-    this.time.addEvent({delay:1000,loop:true,callback:()=>{ this.timeLeft--; this.timerText.setText(this.timeLeft+'s'); if(this.timeLeft<=0)this.endGame(); }});
+    this.time.addEvent({delay:1000,loop:true,callback:()=>{ this.timeLeft--; this.timerText.setText(this.timeLeft+'s'); if(this.timeLeft<=0) this.endGame(); }});
     this.input.keyboard.on('keydown-ESC',()=>this.returnToMenu());
   }
 
@@ -290,9 +254,12 @@ class CatchScene extends Phaser.Scene{
     this.comboTimer=setTimeout(()=>{ this.combo=0; hideCombo(); },1500);
     return this.combo>=5 ? 3 : this.combo>=3 ? 2 : 1;
   }
+  resetCombo(){ this.combo=0; clearTimeout(this.comboTimer); this.comboTimer=null; }
+
   endGame(){
-    this.combo=0; hideCombo();
-    this.scene.pause(); saveScore('catch',this.score);
+    this.popEvt?.remove(); this.resetCombo(); hideCombo();
+    this.scene.pause(); saveScore('mole',this.score);
+    if(this.score>=SETTINGS.rewardThreshold.mole && getBest('mole')>=SETTINGS.rewardThreshold.mole) toast(this,'🏅 Best reached — reward unlocked!');
     const {width,height}=this.scale;
     const msg=`Time!\nScore: ${this.score}\nClick to return`;
     const box=this.add.rectangle(width/2,height/2,width*.84,170,0x000000,.7);
@@ -302,7 +269,95 @@ class CatchScene extends Phaser.Scene{
   returnToMenu(){ this.scene.stop(); showMenu(); }
 }
 
-/* ------------------------ Spin the Wheel (sounds added) ------------------------ */
+/* ------------------------ Catch the Coins (coin + bomb + multiplier) ------------------------ */
+class CatchScene extends Phaser.Scene{
+  constructor(){ super('catch'); this.score=0; this.timeLeft=25; this.rewarded=false; this.combo=0; this.comboTimer=null; this.multiplier=1; this.multTimer=null; }
+  create(){
+    const {width,height}=this.scale;
+    this.cameras.main.setBackgroundColor('#0a0718');
+    this.add.text(width/2,28,'🧺 Catch the Coins',{fontSize:'24px',color:'#fff'}).setOrigin(.5);
+    this.scoreText=this.add.text(20,16,'Score: 0',{fontSize:'20px',color:'#8EFF98'});
+    this.timerText=this.add.text(width-20,16,this.timeLeft+'s',{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
+
+    makeEmojiTexture(this,'emoji_coin','🪙',52);
+    makeEmojiTexture(this,'emoji_bombSmall','🧨',52);
+    makeEmojiTexture(this,'emoji_star','✨',52);
+    makeRectTexture(this,'basketRect',180,26,0xffd86a);
+
+    this.physics.world.setBounds(0,0,width,height);
+
+    this.basket=this.physics.add.image(width/2,height-60,'basketRect').setImmovable(true);
+    this.basket.body.allowGravity=false;
+
+    this.items=this.physics.add.group({allowGravity:true, gravityY: 750});
+    this.physics.add.overlap(this.basket,this.items,(_,it)=>{
+      const type=it.getData('type');
+      if(type==='coin'){
+        const mult = this.bumpCombo()*this.multiplier; Sound.pop();
+        this.score += mult; showCombo(mult); this.scoreText.setText('Score: '+this.score);
+      }else if(type==='bomb'){
+        Sound.boom(); this.score = Math.max(0, this.score-3); this.scoreText.setText('Score: '+this.score);
+        this.cameras.main.shake(120,0.003); this.resetCombo(); hideCombo();
+      }else if(type==='mult'){
+        Sound.ding(); this.activateMultiplier(6);
+      }
+      it.destroy();
+      if(!this.rewarded && getBest('catch')<SETTINGS.rewardThreshold.catch && this.score>=SETTINGS.rewardThreshold.catch) toast(this,'🎉 Reward unlocked!');
+    });
+
+    // spawns
+    this.time.addEvent({delay:520,loop:true,callback:()=>this.spawnFaller()});
+
+    this.events.on('update',()=>this.items.children.iterate(c=>{ if(c&&c.y>height+60)c.destroy(); }));
+
+    this.input.on('pointermove',p=>{ this.basket.x=Phaser.Math.Clamp(p.x,90,width-90); this.basket.body.updateFromGameObject(); });
+    this.time.addEvent({delay:1000,loop:true,callback:()=>{ this.timeLeft--; this.timerText.setText(this.timeLeft+'s'); if(this.timeLeft<=0)this.endGame(); }});
+    this.input.keyboard.on('keydown-ESC',()=>this.returnToMenu());
+  }
+
+  spawnFaller(){
+    const w=this.scale.width, typeRand=Math.random();
+    let key='emoji_coin', type='coin';
+    if(typeRand<0.14){ key='emoji_bombSmall'; type='bomb'; }
+    else if(typeRand>0.84){ key='emoji_star'; type='mult'; }
+
+    const x=Phaser.Math.Between(40,w-40);
+    const it=this.physics.add.image(x,-30,key).setData('type',type);
+    it.setBounce(0).setVelocity(0,120).setMaxVelocity(430,1100).setCollideWorldBounds(false);
+    this.items.add(it);
+
+    const flash=this.add.rectangle(x,0,6,30,0xffffff).setAlpha(.7);
+    this.tweens.add({targets:flash,alpha:0,y:60,duration:320,onComplete:()=>flash.destroy()});
+  }
+
+  activateMultiplier(seconds){
+    this.multiplier=2; let left=seconds; showMult(left);
+    clearInterval(this.multTimer);
+    this.multTimer=setInterval(()=>{ left--; if(left>0){ showMult(left); } else { clearInterval(this.multTimer); this.multiplier=1; hideMult(); } },1000);
+  }
+
+  bumpCombo(){
+    if(this.comboTimer){ this.combo=Math.min(this.combo+1,9); } else { this.combo=1; }
+    clearTimeout(this.comboTimer);
+    this.comboTimer=setTimeout(()=>{ this.combo=0; hideCombo(); },1500);
+    return this.combo>=5 ? 3 : this.combo>=3 ? 2 : 1;
+  }
+  resetCombo(){ this.combo=0; clearTimeout(this.comboTimer); this.comboTimer=null; }
+
+  endGame(){
+    this.resetCombo(); hideCombo(); hideMult(); clearInterval(this.multTimer); this.multiplier=1;
+    this.scene.pause(); saveScore('catch',this.score);
+    if(this.score>=SETTINGS.rewardThreshold.catch && getBest('catch')>=SETTINGS.rewardThreshold.catch) toast(this,'🏅 Best reached — reward unlocked!');
+    const {width,height}=this.scale;
+    const msg=`Time!\nScore: ${this.score}\nClick to return`;
+    const box=this.add.rectangle(width/2,height/2,width*.84,170,0x000000,.7);
+    const txt=this.add.text(width/2,height/2,msg,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
+    [box,txt].forEach(el=>el.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.returnToMenu()));
+  }
+  returnToMenu(){ this.scene.stop(); showMenu(); }
+}
+
+/* ------------------------ Spin the Wheel (same as before, with sounds) ------------------------ */
 class WheelScene extends Phaser.Scene{
   constructor(){ super('wheel'); this.spinning=false; }
   create(){
@@ -364,13 +419,13 @@ const game=new Phaser.Game({
   physics:{default:'arcade',arcade:{debug:false}},
   scene:[MoleScene,CatchScene,WheelScene]
 });
-function start(mode){ hideMenu(); game.scene.start(mode); }
+function start(mode){ hideMenu(); openStarter(mode); }
 
 const menu=document.getElementById('menu');
-function showMenu(){ hideCombo(); menu.style.display='grid'; }
+function showMenu(){ hideCombo(); hideMult(); menu.style.display='grid'; }
 function hideMenu(){ menu.style.display='none'; }
 showMenu();
-document.querySelectorAll('#menu [data-mode]').forEach(b=>b.addEventListener('click',()=>start(b.dataset.mode)));
+document.querySelectorAll('#menu [data-mode]').forEach(b=>b.addEventListener('click',()=>{ hideMenu(); openStarter(b.dataset.mode); }));
 
 document.getElementById('claim').addEventListener('click',()=>{
   const active=game.scene.getScenes(true)[0]; if(active) toast(active,'Reward claimed!');
@@ -382,15 +437,15 @@ const lbOverlay=document.getElementById('leaderboardOverlay');
 const lbTables=document.getElementById('lbTables');
 document.getElementById('openLeaderboard').onclick=()=>{ renderLB('all'); lbOverlay.style.display='grid'; };
 document.getElementById('closeLB').onclick=()=>{ lbOverlay.style.display='none'; };
-document.getElementById('clearLB').onclick=()=>{ ['mole','catch','wheel'].forEach(g=>localStorage.removeItem(`lb_${g}`)); renderLB('all'); };
+document.getElementById('clearLB').onclick=()=>{ ['mole','catch','wheel'].forEach(g=>{localStorage.removeItem(`lb_${g}`); localStorage.removeItem(`best_${g}`);}); renderLB('all'); };
 document.querySelectorAll('#lbTabs [data-lb]').forEach(b=>b.onclick=()=>renderLB(b.dataset.lb));
 
 function renderLB(which){
   const games=which==='all'?['mole','catch','wheel']:[which];
   lbTables.innerHTML=games.map(g=>{
-    const rows=getScores(g);
+    const rows=getScores(g), best=getBest(g);
     const body=rows.length?rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.score}</td><td class="muted">${new Date(r.ts).toLocaleString()}</td></tr>`).join(''):`<tr><td colspan="3" class="muted">No scores yet</td></tr>`;
-    return `<h3 style="margin:14px 0 6px">${g.toUpperCase()}</h3>
+    return `<h3 style="margin:14px 0 6px">${g.toUpperCase()} — Best: ${best}</h3>
       <table><thead><tr><th>#</th><th>Score</th><th>When</th></tr></thead><tbody>${body}</tbody></table>`;
   }).join('');
 }
