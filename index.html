@@ -8,7 +8,7 @@
   :root { color-scheme: dark; }
   html,body{height:100%;margin:0;background:#090a16;color:#eef4ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
   canvas{display:block;width:100%;height:100%}
-  #menu,#leaderboardOverlay{position:fixed;inset:0;display:none;place-items:center;z-index:5;background:linear-gradient(180deg,#0a0718 0%,#090a16 100%)}
+  #menu,#leaderboardOverlay{position:fixed;inset:0;display:none;place-items:center;z-index:5;background:linear-gradient(180deg,#0a0718 0%, #090a16 100%)}
   .card{width:min(560px,92%);background:#0f1226;border:1px solid #243;border-radius:16px;padding:20px;box-shadow:0 20px 60px #0007;text-align:center}
   .grid{display:grid;gap:12px;margin-top:14px}
   .primary{background:#8a5dff;color:#0a0718;font-weight:800;border:0;padding:12px 16px;border-radius:14px;cursor:pointer;font-size:18px}
@@ -18,11 +18,13 @@
   table{width:100%;border-collapse:collapse;margin-top:12px}
   th,td{padding:8px 10px;border-bottom:1px solid #2b325d;text-align:left}
   .muted{color:#a9b7d8}
+  .comboChip{position:fixed;left:50%;top:68px;transform:translateX(-50%);background:#1b2040;border:1px solid #2b325d;border-radius:999px;padding:6px 12px;font-weight:800;letter-spacing:.4px;display:none;z-index:6}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
 </head>
 <body>
   <div id="hud"><button id="claim">Claim reward</button></div>
+  <div id="combo" class="comboChip">Combo ×2</div>
 
   <!-- Menu -->
   <div id="menu">
@@ -58,6 +60,35 @@
   </div>
 
 <script>
+/* ------------------------ tiny sound engine (WebAudio) ------------------------ */
+const Sound = (() => {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const resume = () => ctx.state === 'suspended' && ctx.resume();
+  window.addEventListener('pointerdown', resume, { once:true });
+
+  function tone(freq=440, dur=0.12, type='sine', vol=0.18) {
+    const o=ctx.createOscillator(), g=ctx.createGain();
+    o.type=type; o.frequency.value=freq; o.connect(g); g.connect(ctx.destination);
+    const t=ctx.currentTime; g.gain.setValueAtTime(0,t);
+    g.gain.linearRampToValueAtTime(vol,t+0.01); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    o.start(t); o.stop(t+dur+0.02);
+  }
+  function chord(freqs=[660,880,1320], dur=0.14, type='sine', vol=0.14) {
+    freqs.forEach((f,i)=>tone(f, dur*(1-0.12*i), type, vol));
+  }
+  function pop(){ tone(1200,0.08,'triangle',0.16); }
+  function click(){ tone(880,0.05,'square',0.1); }
+  function ding(){ chord([660,990,1320],0.16,'sine',0.16); }
+  function boom(){
+    const len=ctx.sampleRate*0.22, buf=ctx.createBuffer(1,len,ctx.sampleRate);
+    const data=buf.getChannelData(0); for(let i=0;i<len;i++){ data[i]=(Math.random()*2-1)*(1-i/len); }
+    const src=ctx.createBufferSource(); src.buffer=buf;
+    const g=ctx.createGain(); g.gain.value=0.35; src.connect(g); g.connect(ctx.destination); src.start();
+    tone(90,0.2,'sine',0.12);
+  }
+  return { pop, click, ding, boom };
+})();
+
 /* ------------------------ shared utils ------------------------ */
 const W=()=>innerWidth, H=()=>innerHeight;
 const SETTINGS={
@@ -83,7 +114,6 @@ const getScores=(g)=>{try{return JSON.parse(localStorage.getItem(`lb_${g}`)||"[]
 const incSpinCount=()=>localStorage.setItem(`wheel_${todayKey()}`,((+localStorage.getItem(`wheel_${todayKey()}`)||0)+1).toString());
 const getSpinCount=()=>+localStorage.getItem(`wheel_${todayKey()}`)||0;
 
-/* helpers to generate textures at runtime */
 function makeRectTexture(scene,key,w,h,fill,stroke=0xffffff){
   if(scene.textures.exists(key))return;
   const g=scene.add.graphics(); g.fillStyle(fill,1).fillRoundedRect(0,0,w,h,6);
@@ -98,9 +128,18 @@ function makeEmojiTexture(scene,key,emoji,size=48){
   scene.textures.addImage(key,c);
 }
 
-/* ------------------------ Whack-a-Mole (animals + bomb) ------------------------ */
+/* ---------- UI combo chip ---------- */
+const comboChip = document.getElementById('combo');
+function showCombo(mult){
+  comboChip.textContent = `Combo ×${mult}`;
+  comboChip.style.display='block';
+  comboChip.animate([{transform:'translate(-50%,-4px)'},{transform:'translate(-50%,0)'}],{duration:120});
+}
+function hideCombo(){ comboChip.style.display='none'; }
+
+/* ------------------------ Whack-a-Mole (animals + bomb + combo) ------------------------ */
 class MoleScene extends Phaser.Scene{
-  constructor(){ super('mole'); this.score=0; this.timeLeft=SETTINGS.mole.duration; this.rewarded=false; this.holes=[]; }
+  constructor(){ super('mole'); this.score=0; this.timeLeft=SETTINGS.mole.duration; this.rewarded=false; this.holes=[]; this.combo=0; this.comboTimer=null; }
   create(){
     const {width,height}=this.scale;
     this.cameras.main.setBackgroundColor('#0a0718');
@@ -122,29 +161,26 @@ class MoleScene extends Phaser.Scene{
     const gridW=Math.min(width*0.9,height*0.78);
     const cell=gridW/cols, startX=width/2-gridW/2+cell/2, startY=height*0.2+cell/2;
 
-    // particles for bomb boom
-    const boom = this.add.particles(0,0,'holePlate');
-    const emitter = boom.createEmitter({
-      speed: {min:150,max:260}, lifespan: 400, alpha:{start:1,end:0}, scale:{start:.3,end:0},
-      emitting:false, tint:0xff4444
-    });
-
     const animals=['emoji_hamster','emoji_cat','emoji_dog','emoji_rabbit'];
 
     for(let r=0;r<rows;r++){
       for(let c=0;c<cols;c++){
         const x=startX+c*cell, y=startY+r*cell;
-        const plate=this.add.image(x,y+20,'holePlate').setScale(1);
+        const plate=this.add.image(x,y+20,'holePlate');
         const face=this.add.image(x,y,'emoji_hamster').setVisible(false).setInteractive({useHandCursor:true});
 
         face.on('pointerdown',()=>{
           if(!face.visible)return;
           if(face.getData('type')==='bomb'){
-            this.cameras.main.shake(120,0.003);
-            emitter.setPosition(face.x,face.y); emitter.explode(16);
-            this.score=Math.max(0,this.score-2);
+            // bomb: -2, shake, boom, reset combo
+            this.cameras.main.shake(120,0.003); Sound.boom();
+            this.score=Math.max(0,this.score-2); this.resetCombo(); hideCombo();
           }else{
-            this.score+=1;
+            // animal: +1 * multiplier, pop, combo++
+            const mult = this.bumpCombo(); // returns 1,2,3
+            Sound.pop();
+            this.score += 1*mult;
+            showCombo(mult);
           }
           this.scoreText.setText('Score: '+this.score);
           this.tweens.add({targets:face, y:face.y-12, duration:90, yoyo:true, onComplete:()=>face.setVisible(false)});
@@ -161,7 +197,7 @@ class MoleScene extends Phaser.Scene{
       if(!free.length)return;
       const h=Phaser.Utils.Array.GetRandom(free);
 
-      const isBomb=Math.random()<0.18; // 18% bomb
+      const isBomb=Math.random()<0.18;
       const tex=isBomb ? 'emoji_bomb' : Phaser.Utils.Array.GetRandom(animals);
       h.face.setTexture(tex).setData('type', isBomb ? 'bomb' : 'animal');
       h.face.y=h.plate.y; h.face.setVisible(true);
@@ -182,8 +218,19 @@ class MoleScene extends Phaser.Scene{
 
     this.input.keyboard.on('keydown-ESC',()=>this.returnToMenu());
   }
+
+  bumpCombo(){
+    if(this.comboTimer){ this.combo = Math.min(this.combo+1, 9); }
+    else { this.combo = 1; }
+    clearTimeout(this.comboTimer);
+    this.comboTimer = setTimeout(()=>{ this.combo=0; hideCombo(); }, 1500);
+    // multiplier tiers: 1-2 -> x1, 3-4 -> x2, 5+ -> x3
+    return this.combo>=5 ? 3 : this.combo>=3 ? 2 : 1;
+  }
+  resetCombo(){ this.combo=0; clearTimeout(this.comboTimer); this.comboTimer=null; }
+
   endGame(){
-    this.popEvt?.remove();
+    this.popEvt?.remove(); this.resetCombo(); hideCombo();
     this.scene.pause(); saveScore('mole',this.score);
     const {width,height}=this.scale;
     const msg=`Time!\nScore: ${this.score}\nClick to return`;
@@ -194,9 +241,9 @@ class MoleScene extends Phaser.Scene{
   returnToMenu(){ this.scene.stop(); showMenu(); }
 }
 
-/* ------------------------ Catch the Coins (emoji coins + full fall) ------------------------ */
+/* ------------------------ Catch the Coins (emoji, full fall, combo + sound) ------------------------ */
 class CatchScene extends Phaser.Scene{
-  constructor(){ super('catch'); this.score=0; this.timeLeft=25; this.rewarded=false; }
+  constructor(){ super('catch'); this.score=0; this.timeLeft=25; this.rewarded=false; this.combo=0; this.comboTimer=null; }
   create(){
     const {width,height}=this.scale;
     this.cameras.main.setBackgroundColor('#0a0718');
@@ -207,7 +254,6 @@ class CatchScene extends Phaser.Scene{
     makeEmojiTexture(this,'emoji_coin','🪙',52);
     makeRectTexture(this,'basketRect',180,26,0xffd86a);
 
-    // ensure world bounds match the canvas so bodies fall all the way
     this.physics.world.setBounds(0,0,width,height);
 
     this.basket=this.physics.add.image(width/2,height-60,'basketRect').setImmovable(true);
@@ -215,28 +261,37 @@ class CatchScene extends Phaser.Scene{
 
     this.coins=this.physics.add.group({allowGravity:true, gravityY: 700});
     this.physics.add.overlap(this.basket,this.coins,(_,coin)=>{
-      this.score++; this.scoreText.setText('Score: '+this.score); coin.destroy();
+      const mult=this.bumpCombo();
+      Sound.pop();
+      this.score+=1*mult; this.scoreText.setText('Score: '+this.score); coin.destroy();
+      showCombo(mult);
       if(!this.rewarded && this.score>=SETTINGS.rewardThreshold.catch){ this.rewarded=true; toast(this,'🎉 Reward unlocked!'); }
     });
 
     this.time.addEvent({delay:500,loop:true,callback:()=>{
       const x=Phaser.Math.Between(40,width-40);
       const coin=this.physics.add.image(x,-30,'emoji_coin');
-      coin.setBounce(0).setVelocity(0,120).setMaxVelocity(400,1000).setCollideWorldBounds(false);
+      coin.setBounce(0).setVelocity(0,120).setMaxVelocity(420,1000).setCollideWorldBounds(false);
       this.coins.add(coin);
-      // spawn flash
       const flash=this.add.rectangle(x,0,6,30,0xffffff).setAlpha(.7);
       this.tweens.add({targets:flash,alpha:0,y:60,duration:350,onComplete:()=>flash.destroy()});
     }});
 
-    // clean if somehow past bottom
     this.events.on('update',()=>this.coins.children.iterate(c=>{ if(c&&c.y>height+60)c.destroy(); }));
 
     this.input.on('pointermove',p=>{ this.basket.x=Phaser.Math.Clamp(p.x,90,width-90); this.basket.body.updateFromGameObject(); });
     this.time.addEvent({delay:1000,loop:true,callback:()=>{ this.timeLeft--; this.timerText.setText(this.timeLeft+'s'); if(this.timeLeft<=0)this.endGame(); }});
     this.input.keyboard.on('keydown-ESC',()=>this.returnToMenu());
   }
+
+  bumpCombo(){
+    if(this.comboTimer){ this.combo=Math.min(this.combo+1,9); } else { this.combo=1; }
+    clearTimeout(this.comboTimer);
+    this.comboTimer=setTimeout(()=>{ this.combo=0; hideCombo(); },1500);
+    return this.combo>=5 ? 3 : this.combo>=3 ? 2 : 1;
+  }
   endGame(){
+    this.combo=0; hideCombo();
     this.scene.pause(); saveScore('catch',this.score);
     const {width,height}=this.scale;
     const msg=`Time!\nScore: ${this.score}\nClick to return`;
@@ -247,7 +302,7 @@ class CatchScene extends Phaser.Scene{
   returnToMenu(){ this.scene.stop(); showMenu(); }
 }
 
-/* ------------------------ Spin the Wheel (unchanged) ------------------------ */
+/* ------------------------ Spin the Wheel (sounds added) ------------------------ */
 class WheelScene extends Phaser.Scene{
   constructor(){ super('wheel'); this.spinning=false; }
   create(){
@@ -289,13 +344,13 @@ class WheelScene extends Phaser.Scene{
   trySpin(prizes){
     if(this.spinning) return;
     const used=getSpinCount(); if(used>=SETTINGS.wheelDailyLimit){ toast(this,'Limit reached. Come back tomorrow!'); return; }
-    this.spinning=true;
+    this.spinning=true; Sound.click();
     const seg=360/prizes.length, target=Phaser.Math.Between(0,prizes.length-1);
     const angle=360*4+(target*seg)+seg/2;
     this.tweens.add({targets:this.wheel,angle,duration:3200,ease:'Cubic.easeOut',
       onComplete:()=>{
         this.spinning=false; incSpinCount(); this.updateLimitText();
-        const prize=prizes[target]; toast(this,`You got: ${prize}`);
+        const prize=prizes[target]; toast(this,`You got: ${prize}`); Sound.ding();
         saveScore('wheel',['+10','+15','+20','+30','+50','x2','Jackpot'].indexOf(prize)+1);
       }});
   }
@@ -312,7 +367,7 @@ const game=new Phaser.Game({
 function start(mode){ hideMenu(); game.scene.start(mode); }
 
 const menu=document.getElementById('menu');
-function showMenu(){ menu.style.display='grid'; }
+function showMenu(){ hideCombo(); menu.style.display='grid'; }
 function hideMenu(){ menu.style.display='none'; }
 showMenu();
 document.querySelectorAll('#menu [data-mode]').forEach(b=>b.addEventListener('click',()=>start(b.dataset.mode)));
