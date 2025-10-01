@@ -7,8 +7,10 @@
 <style>
   :root { color-scheme: dark; }
   html,body{height:100%;margin:0;background:#090a16;color:#eef4ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  #stage{position:fixed;inset:0}
   canvas{display:block;width:100%;height:100%}
 
+  /* overlays & UI */
   #menu,#leaderboardOverlay,#starter{position:fixed;inset:0;display:none;place-items:center;z-index:6;background:linear-gradient(180deg,#0a0718 0%, #090a16 100%)}
   .card{width:min(560px,92%);background:#0f1226;border:1px solid #243;border-radius:16px;padding:20px;box-shadow:0 20px 60px #0007;text-align:center}
   .grid{display:grid;gap:12px;margin-top:14px}
@@ -31,15 +33,18 @@
 
   #errBadge{position:fixed;right:12px;top:12px;background:#4b1010;border:1px solid #7d1b1b;border-radius:10px;padding:8px 12px;display:none;z-index:9}
 </style>
-<script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
+  <canvas id="stage"></canvas>
+
+  <!-- small HUD -->
   <div id="hud"><button id="claim">Claim reward</button></div>
   <div id="combo" class="chip">Combo ×2</div>
   <div id="mult"  class="chip">×2 active</div>
   <button id="backGameBtn">← Menu</button>
   <div id="errBadge"></div>
 
+  <!-- Menu -->
   <div id="menu">
     <div class="card">
       <h1 style="margin:0 0 6px">Mini Game Hub</h1>
@@ -52,6 +57,7 @@
     </div>
   </div>
 
+  <!-- Per-game Starter -->
   <div id="starter">
     <div class="card">
       <h2 id="startTitle" style="margin:0 0 8px">Ready?</h2>
@@ -64,6 +70,7 @@
     </div>
   </div>
 
+  <!-- Leaderboard -->
   <div id="leaderboardOverlay">
     <div class="card">
       <h2 style="margin:0 0 6px">🏆 Leaderboard</h2>
@@ -82,7 +89,7 @@
   </div>
 
 <script>
-/* error badge */
+/* ---------------- Error badge (client-side only) ---------------- */
 (() => {
   const badge = document.getElementById('errBadge');
   const show = (m) => { badge.textContent = m; badge.style.display = 'block'; };
@@ -90,49 +97,53 @@
   addEventListener('unhandledrejection',e => show(String(e.reason)));
 })();
 
-/* sounds */
+/* ---------------- Tiny sound beeps (no deps) ---------------- */
 const Sound = (() => {
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const resume = () => ctx.state === 'suspended' && ctx.resume();
-  addEventListener('pointerdown', resume, { once:true });
+  let ctx;
+  function ensure(){ if(!ctx) ctx=new (window.AudioContext||window.webkitAudioContext)(); }
   function tone(freq, dur=0.12, type='sine', vol=0.18) {
-    const o=ctx.createOscillator(), g=ctx.createGain();
+    ensure(); const o=ctx.createOscillator(), g=ctx.createGain();
     o.type=type; o.frequency.value=freq; o.connect(g); g.connect(ctx.destination);
-    const t=ctx.currentTime; g.gain.setValueAtTime(0,t);
-    g.gain.linearRampToValueAtTime(vol,t+0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
-    o.start(t); o.stop(t+dur+0.02);
+    const t=ctx.currentTime; g.gain.value=0; g.gain.linearRampToValueAtTime(vol,t+0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dur); o.start(t); o.stop(t+dur+0.02);
   }
   function noise(d=0.25,v=0.3){
-    const n=ctx.sampleRate*d, b=ctx.createBuffer(1,n,ctx.sampleRate), a=b.getChannelData(0);
+    ensure(); const n=ctx.sampleRate*d, b=ctx.createBuffer(1,n,ctx.sampleRate), a=b.getChannelData(0);
     for(let i=0;i<n;i++) a[i]=(Math.random()*2-1)*(1-i/n);
-    const s=ctx.createBufferSource(); s.buffer=b; const g=ctx.createGain(); g.gain.value=v;
-    s.connect(g); g.connect(ctx.destination); s.start();
+    const s=ctx.createBufferSource(); s.buffer=b; const g=ctx.createGain(); g.gain.value=v; s.connect(g); g.connect(ctx.destination); s.start();
   }
+  addEventListener('pointerdown', ()=>ensure(), {once:true});
   return { pop:()=>tone(1200,0.08,'triangle',0.16), click:()=>tone(880,0.05,'square',0.1),
            ding:()=>[660,990,1320].forEach((f,i)=>tone(f,0.12-0.02*i,'sine',0.16)),
            boom:()=>{ noise(0.22,0.35); tone(90,0.2,'sine',0.12);} };
 })();
 
-/* helpers */
-const W=()=>innerWidth, H=()=>innerHeight;
-const SETTINGS={ mole:{ duration:25, gridSmall:3, gridLarge:4 } };
+/* ---------------- Globals & UI helpers ---------------- */
+const stage = document.getElementById('stage');
+const W = ()=>stage.width = innerWidth*devicePixelRatio;
+const H = ()=>stage.height= innerHeight*devicePixelRatio;
+const CTX = ()=>stage.getContext('2d');
 
-const comboChip=document.getElementById('combo');
-const multChip=document.getElementById('mult');
+const comboChip = document.getElementById('combo');
+const multChip  = document.getElementById('mult');
 const showCombo=(m)=>{comboChip.textContent=`Combo ×${m}`;comboChip.style.display='block';};
 const hideCombo=()=>{comboChip.style.display='none';};
+const showMult =(s)=>{multChip.textContent=`×2 active (${s}s)`;multChip.style.display='block';};
 const hideMult =()=>{multChip.style.display='none';};
 
-function toast(scene,msg){
-  if(!scene) return;
-  const t=scene.add.text(scene.scale.width/2,scene.scale.height*.85,msg,
-    {fontSize:'22px',color:'#fff',backgroundColor:'#0008',padding:{x:12,y:8}}).setOrigin(.5);
-  scene.tweens.add({targets:t,alpha:0,duration:1200,delay:800,onComplete:()=>t.destroy()});
+function toast(msg){
+  const t=document.createElement('div');
+  t.textContent=msg;
+  Object.assign(t.style,{position:'fixed',left:'50%',top:'85%',transform:'translateX(-50%)',
+    background:'#0008',color:'#fff',padding:'8px 12px',borderRadius:'10px',zIndex:8});
+  document.body.appendChild(t);
+  setTimeout(()=>{t.style.transition='opacity 1s';t.style.opacity='0';},800);
+  setTimeout(()=>t.remove(),1800);
 }
 function saveScore(game,value){
   try{
-    const key=`lb_${game}`; const list=JSON.parse(localStorage.getItem(key)||"[]");
+    const key=`lb_${game}`;
+    const list=JSON.parse(localStorage.getItem(key)||"[]");
     list.push({score:value,ts:Date.now()}); list.sort((a,b)=>b.score-a.score);
     localStorage.setItem(key,JSON.stringify(list.slice(0,5)));
     const bestKey=`best_${game}`; const best=Math.max(value, +(localStorage.getItem(bestKey)||0));
@@ -142,249 +153,274 @@ function saveScore(game,value){
 const getScores=(g)=>{try{return JSON.parse(localStorage.getItem(`lb_${g}`)||"[]")}catch(e){return[]}};
 const getBest  =(g)=>+localStorage.getItem(`best_${g}`)||0;
 
-/* PURE-canvas texture makers (no Phaser graphics/timers at all) */
-function makeRectTexture(scene,key,w,h,fillHex,strokeHex=0xffffff){
-  if(scene.textures.exists(key)) return;
-  const c=document.createElement('canvas'); c.width=w; c.height=h;
-  const ctx=c.getContext('2d');
-  const r=6;
-  const rr=(x,y,w,h,r)=>{ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);
-    ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);ctx.lineTo(x+r,y+h);
-    ctx.quadraticCurveTo(x,y+h,x,y+h-r);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();}
-  // fill
-  ctx.fillStyle = '#'+fillHex.toString(16).padStart(6,'0');
-  rr(1,1,w-2,h-2,r); ctx.fill();
-  // stroke
-  ctx.lineWidth=2; ctx.strokeStyle='#'+strokeHex.toString(16).padStart(6,'0'); ctx.stroke();
-  scene.textures.addCanvas(key,c);
-}
-function makeEmojiTexture(scene,key,emoji,size=48){
-  if(scene.textures.exists(key)) return;
-  const c=document.createElement('canvas'); c.width=c.height=size;
-  const x=c.getContext('2d'); x.textAlign='center'; x.textBaseline='middle';
-  x.font=`${Math.floor(size*0.9)}px "Apple Color Emoji","Segoe UI Emoji",sans-serif`;
-  x.fillText(emoji,size/2,size/2);
-  scene.textures.addCanvas(key,c);
-}
+/* ---------------- Simple engine (no libs) ---------------- */
+const Engine = (() => {
+  let raf=0, running=false, last=0, update=null, draw=null, cleanup=null, pointer=null;
+  function loop(ts){
+    if(!running) return;
+    const dt=Math.min(0.033,(ts-last)/1000); last=ts;
+    update && update(dt);
+    CTX().clearRect(0,0,W(),H());
+    draw && draw(CTX());
+    raf=requestAnimationFrame(loop);
+  }
+  function start(u,d,c,p){
+    stop(); running=true; update=u; draw=d; cleanup=c||null; pointer=p||null; last=performance.now();
+    raf=requestAnimationFrame(loop);
+    stage.onpointermove = stage.ontouchmove = (e)=>{
+      const rect=stage.getBoundingClientRect();
+      const x=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+      const y=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+      pointer && pointer('move', x*devicePixelRatio, y*devicePixelRatio);
+    };
+    stage.onpointerdown = (e)=>{
+      const rect=stage.getBoundingClientRect(); const x=(e.clientX-rect.left)*devicePixelRatio, y=(e.clientY-rect.top)*devicePixelRatio;
+      pointer && pointer('down', x, y);
+    };
+  }
+  function stop(){
+    running=false; cancelAnimationFrame(raf);
+    stage.onpointermove=stage.onpointerdown=null;
+    cleanup && cleanup();
+  }
+  return { start, stop };
+})();
 
-/* ---------------- Whack-a-Mole ---------------- */
-class MoleScene extends Phaser.Scene{
-  constructor(){
-    super('mole');
-    this.score=0; this.timeLeft=SETTINGS.mole.duration;
-    this.holes=[]; this.combo=0; this.comboTimer=null; this._timeouts=[];
+/* ---------------- Whack-a-Mole (canvas) ---------------- */
+function playMole(){
+  const state={
+    timeLeft:25, score:0, grid:[], moles:[], spawnT:0, combo:0, comboTO:null
+  };
+  const cols=(Math.min(innerWidth,innerHeight)<720)?3:4;
+  const rows=cols;
+  const gridW=Math.min(W()*0.9,H()*0.78), cell=gridW/cols;
+  const sx=W()/2-gridW/2+cell/2, sy=H()*0.2+cell/2;
+
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      state.grid.push({x:sx+c*cell, y:sy+r*cell});
+    }
+  }
+  const animals=['🐹','🐱','🐶','🐰'];
+
+  function bumpCombo(){
+    if(state.comboTO){ state.combo=Math.min(state.combo+1,9); } else { state.combo=1; }
+    clearTimeout(state.comboTO);
+    state.comboTO=setTimeout(()=>{ state.combo=0; hideCombo(); },1500);
+    return state.combo>=5?3:state.combo>=3?2:1;
+  }
+  function endGame(){
+    Engine.stop(); clearTimeout(state.comboTO); hideCombo();
+    saveScore('mole',state.score);
+    toast(`Time! Score: ${state.score}`);
+    showMenu();
   }
 
-  create(){
-    const {width,height}=this.scale;
-    this.cameras.main.setBackgroundColor('#0a0718');
-    this.add.text(width/2,28,'🎯 Whack-a-Mole',{fontSize:'24px',color:'#fff'}).setOrigin(.5);
-    this.scoreText=this.add.text(20,16,'0',{fontSize:'20px',color:'#8EFF98'});
-    this.timerText=this.add.text(width-20,16,`${this.timeLeft}s`,{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
+  function update(dt){
+    state.spawnT-=dt;
+    if(state.spawnT<=0){
+      // spawn a mole/bomb in free hole
+      const freeIdx = state.grid.map((_,i)=>i).filter(i=>!state.moles.find(m=>m.idx===i));
+      if(freeIdx.length){
+        const idx = freeIdx[Math.floor(Math.random()*freeIdx.length)];
+        const isBomb = Math.random()<0.18;
+        state.moles.push({idx, bomb:isBomb, t:0.78, scale:0.85});
+      }
+      state.spawnT = 0.62;
+    }
+    // tick moles
+    state.moles.forEach(m=>{ m.t -= dt; m.scale = Math.min(1, m.scale+dt*2); });
+    state.moles = state.moles.filter(m=>m.t>0);
 
-    ['🐹','🐱','🐶','🐰'].forEach((e,i)=>makeEmojiTexture(this,['ham','cat','dog','rab'][i],e,64));
-    makeEmojiTexture(this,'bomb','💣',64);
-    makeRectTexture(this,'hole',96,28,0x1b2040,0x2b325d);
+    // timer
+    state.timeLeft -= dt;
+    if(state.timeLeft<=0) endGame();
+  }
 
-    const cols=(Math.min(width,height)<720)?SETTINGS.mole.gridSmall:SETTINGS.mole.gridLarge;
-    const rows=cols; const gridW=Math.min(width*0.9,height*0.78);
-    const cell=gridW/cols; const sx=width/2-gridW/2+cell/2; const sy=height*0.2+cell/2;
+  function draw(ctx){
+    ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
+    // title & HUD
+    ctx.fillStyle='#fff'; ctx.font=`${24*devicePixelRatio}px system-ui, sans-serif`;
+    ctx.fillText('🎯 Whack-a-Mole', W()/2, 28*devicePixelRatio);
+    ctx.fillStyle='#8EFF98'; ctx.font=`${20*devicePixelRatio}px system-ui,sans-serif`;
+    ctx.fillText(String(Math.round(state.score)), 20*devicePixelRatio, 18*devicePixelRatio);
+    ctx.fillStyle='#ffd86a'; ctx.textAlign='right';
+    ctx.fillText(`${Math.ceil(state.timeLeft)}s`, W()-20*devicePixelRatio, 18*devicePixelRatio);
 
-    const hideFace=(f)=>{ f.disableInteractive(); f.setVisible(false).setActive(false); };
-    const setT=(cb,ms)=>{ const id=setTimeout(cb,ms); this._timeouts.push(id); return id; };
+    // holes
+    const plateW=96*devicePixelRatio, plateH=28*devicePixelRatio;
+    ctx.strokeStyle='#2b325d'; ctx.lineWidth=2*devicePixelRatio; ctx.fillStyle='#1b2040';
+    for(const g of state.grid){
+      const x=g.x-plateW/2, y=g.y+20*devicePixelRatio-plateH/2, r=6*devicePixelRatio;
+      roundRect(ctx,x,y,plateW,plateH,r,true,true);
+    }
+    // moles
+    for(const m of state.moles){
+      const g=state.grid[m.idx]; const s=64*devicePixelRatio*m.scale;
+      ctx.font = `${s}px "Apple Color Emoji","Segoe UI Emoji",system-ui`;
+      ctx.fillText(m.bomb?'💣':animals[(m.idx+m.scale*10|0)%animals.length], g.x, g.y);
+    }
+    ctx.restore();
+  }
 
-    for(let r=0;r<rows;r++){
-      for(let c=0;c<cols;c++){
-        const x=sx+c*cell, y=sy+r*cell;
-        const plate=this.add.image(x,y+20,'hole');
-        const face=this.add.image(x,y,'ham').setVisible(false).setActive(false);
-        hideFace(face);
-
-        face.on('pointerdown',()=>{
-          if(!face.visible || !face.active) return;
-          const isBomb = face.getData('type')==='bomb';
-          face.setScale(0.9);
-          setT(()=>{ if(face.visible && face.active) face.setScale(1); },90);
-
-          if(isBomb){
-            this.cameras.main.shake(120,0.003); Sound.boom();
-            this.score=Math.max(0,this.score-2); this.resetCombo(); hideCombo();
-          }else{
-            const mult=this.bumpCombo(); Sound.pop();
-            this.score += mult; showCombo(mult);
-          }
-          hideFace(face);
-          this.scoreText.setText(String(this.score));
-        });
-
-        this.holes.push({plate,face,hideFace});
+  function onPointer(type,x,y){
+    if(type!=='down') return;
+    // find mole under pointer
+    for(const m of state.moles){
+      const g=state.grid[m.idx]; const r=34*devicePixelRatio;
+      if(Math.hypot(x-g.x,y-g.y) < r){
+        if(m.bomb){
+          Sound.boom(); state.score=Math.max(0,state.score-2); state.combo=0; hideCombo();
+        }else{
+          const mult=bumpCombo(); Sound.pop(); state.score+=mult; showCombo(mult);
+        }
+        // remove mole
+        state.moles = state.moles.filter(mm=>mm!==m);
+        break;
       }
     }
-
-    this.popEvt=this.time.addEvent({ delay:620, loop:true, callback:()=>{
-      const free=this.holes.filter(h=>!h.face.visible); if(!free.length) return;
-      const h=Phaser.Utils.Array.GetRandom(free);
-      const isBomb=Math.random()<0.18;
-      const key=isBomb ? 'bomb' : Phaser.Utils.Array.GetRandom(['ham','cat','dog','rab']);
-      h.face.setTexture(key).setData('type', isBomb?'bomb':'animal').setScale(0.85)
-           .setActive(true).setVisible(true).setInteractive({useHandCursor:true});
-      this._timeouts.push(setTimeout(()=>{ if(h.face.visible && h.face.active) h.face.setScale(1); },100));
-      this._timeouts.push(setTimeout(()=>{ if(h.face.visible && h.face.active) h.hideFace(h.face); },780));
-    }});
-
-    this.tickEvt=this.time.addEvent({delay:1000,loop:true,callback:()=>{
-      this.timeLeft--; this.timerText.setText(`${this.timeLeft}s`);
-      if(this.timeLeft<=0) this.endGame();
-    }});
-
-    this.input.keyboard.on('keydown-ESC',()=>this.toMenu());
-    this.events.once('shutdown', this.onShutdown, this);
-    this.events.once('destroy',  this.onShutdown, this);
   }
 
-  onShutdown(){
-    this.popEvt?.remove(); this.tickEvt?.remove();
-    this.holes.forEach(h=>{ h.face.removeAllListeners(); h.face.disableInteractive(); h.face.setActive(false).setVisible(false); });
-    this._timeouts.forEach(clearTimeout); this._timeouts.length=0;
-    this.resetCombo(); hideCombo();
-    this.input.keyboard?.removeAllListeners();
-  }
-
-  bumpCombo(){
-    if(this.comboTimer){ this.combo=Math.min(this.combo+1,9); } else { this.combo=1; }
-    clearTimeout(this.comboTimer);
-    this.comboTimer=setTimeout(()=>{ this.combo=0; hideCombo(); },1500);
-    return this.combo>=5?3:this.combo>=3?2:1;
-  }
-  resetCombo(){ this.combo=0; clearTimeout(this.comboTimer); this.comboTimer=null; }
-
-  endGame(){
-    this.onShutdown();
-    saveScore('mole',this.score);
-    const {width,height}=this.scale;
-    const box=this.add.rectangle(width/2,height/2,width*.84,170,0x000000,.7);
-    const txt=this.add.text(width/2,height/2,`Time!\nScore: ${this.score}\nClick to return`,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
-    [box,txt].forEach(el=>el.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.toMenu()));
-  }
-  toMenu(){ this.scene.stop(); showMenu(); }
+  Engine.start(update, draw, ()=>{ clearTimeout(state.comboTO); }, onPointer);
 }
 
-/* ---------------- Catch the Coins ---------------- */
-class CatchScene extends Phaser.Scene{
-  constructor(){ super('catch'); this.score=0; this.timeLeft=25; this.combo=0; this.comboTimer=null; this.mult=1; this.multTimerId=null; this.items=null; this.basket=null; this.collider=null; }
-  create(){
-    const {width,height}=this.scale;
-    this.cameras.main.setBackgroundColor('#0a0718');
-    this.add.text(width/2,28,'🧺 Catch the Coins',{fontSize:'24px',color:'#fff'}).setOrigin(.5);
-    this.scoreText=this.add.text(20,16,'0',{fontSize:'20px',color:'#8EFF98'});
-    this.timerText=this.add.text(width-20,16,`${this.timeLeft}s`,{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
+/* ---------------- Catch the Coins (canvas) ---------------- */
+function playCatch(){
+  const state={
+    timeLeft:25, score:0, items:[], spawnT:0.52, basketX:W()/2, mult:1, multLeft:0, combo:0, comboTO:null
+  };
+  const ground = H()-60*devicePixelRatio;
+  function bumpCombo(){
+    if(state.comboTO){ state.combo=Math.min(state.combo+1,9); } else { state.combo=1; }
+    clearTimeout(state.comboTO);
+    state.comboTO=setTimeout(()=>{ state.combo=0; hideCombo(); },1500);
+    return state.combo>=5?3:state.combo>=3?2:1;
+  }
+  function activateMult(s){
+    state.mult=2; state.multLeft=s; showMult(state.multLeft);
+  }
+  function endGame(){
+    Engine.stop(); clearTimeout(state.comboTO); hideCombo(); hideMult();
+    saveScore('catch',state.score);
+    toast(`Time! Score: ${state.score}`);
+    showMenu();
+  }
+  function update(dt){
+    // spawn
+    state.spawnT-=dt;
+    if(state.spawnT<=0){
+      const r=Math.random(); let type='coin';
+      if(r<0.14) type='bomb'; else if(r>0.84) type='mult';
+      state.items.push({x: between(40,W()-40), y:-30*devicePixelRatio, vy: 120*devicePixelRatio, type});
+      state.spawnT=0.52;
+    }
+    // physics
+    state.items.forEach(it=>{ it.vy = Math.min(it.vy+750*devicePixelRatio*dt, 1100*devicePixelRatio); it.y += it.vy*dt; });
+    state.items = state.items.filter(i=>i.y < H()+60*devicePixelRatio);
 
-    makeEmojiTexture(this,'coin','🪙',52);
-    makeEmojiTexture(this,'bomb2','🧨',52);
-    makeEmojiTexture(this,'star','✨',52);
-    makeRectTexture(this,'basket',180,26,0xffd86a);
-
-    this.physics.world.setBounds(0,0,width,height);
-    this.basket=this.physics.add.image(width/2,height-60,'basket').setImmovable(true);
-    this.basket.body.allowGravity=false;
-
-    this.items=this.physics.add.group({allowGravity:true, gravityY: 750});
-    this.collider = this.physics.add.overlap(this.basket,this.items,(_,it)=>{
-      const type=it.getData('type');
-      if(type==='coin'){
-        const mult = this.bumpCombo()*this.mult; Sound.pop();
-        this.score += mult; showCombo(mult); this.scoreText.setText(String(this.score));
-      }else if(type==='bomb'){
-        Sound.boom(); this.score=Math.max(0,this.score-3); this.scoreText.setText(String(this.score));
-        this.cameras.main.shake(120,0.003); this.resetCombo(); hideCombo();
-      }else if(type==='mult'){
-        Sound.ding(); this.activateMult(6);
+    // basket follow (pointer moves set it)
+    // collisions
+    const bw=180*devicePixelRatio, bh=26*devicePixelRatio, by=ground;
+    state.items = state.items.filter(it=>{
+      if(it.y>by-bh && it.x>state.basketX-bw/2 && it.x<state.basketX+bw/2){
+        if(it.type==='coin'){
+          const mult=bumpCombo()*state.mult; Sound.pop(); state.score+=mult; showCombo(mult);
+        }else if(it.type==='bomb'){
+          Sound.boom(); state.score=Math.max(0,state.score-3); state.combo=0; hideCombo();
+        }else if(it.type==='mult'){
+          Sound.ding(); activateMult(6);
+        }
+        return false;
       }
-      it.destroy();
+      return true;
     });
 
-    this.spawnEvt=this.time.addEvent({delay:520,loop:true,callback:()=>this.spawnDrop()});
-    this.events.on('update',()=>this.items.children.iterate(c=>{ if(c&&c.y>height+60)c.destroy(); }));
+    // timer
+    state.timeLeft -= dt;
+    if(state.timeLeft<=0) endGame();
 
-    this.input.on('pointermove',p=>{ this.basket.x=Phaser.Math.Clamp(p.x,90,width-90); this.basket.body.updateFromGameObject(); });
-    this.tickEvt=this.time.addEvent({delay:1000,loop:true,callback:()=>{ this.timeLeft--; this.timerText.setText(`${this.timeLeft}s`); if(this.timeLeft<=0)this.endGame(); }});
-    this.input.keyboard.on('keydown-ESC',()=>this.toMenu());
+    // mult countdown
+    if(state.mult>1){
+      state.multLeft -= dt;
+      if(state.multLeft>0){ showMult(Math.ceil(state.multLeft)); }
+      else { state.mult=1; hideMult(); }
+    }
+  }
+  function draw(ctx){
+    ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle='#fff'; ctx.font=`${24*devicePixelRatio}px system-ui, sans-serif`;
+    ctx.fillText('🧺 Catch the Coins', W()/2, 28*devicePixelRatio);
+    ctx.fillStyle='#8EFF98'; ctx.font=`${20*devicePixelRatio}px system-ui,sans-serif`;
+    ctx.fillText(String(Math.round(state.score)), 20*devicePixelRatio, 18*devicePixelRatio);
+    ctx.fillStyle='#ffd86a'; ctx.textAlign='right';
+    ctx.fillText(`${Math.ceil(state.timeLeft)}s`, W()-20*devicePixelRatio, 18*devicePixelRatio);
 
-    this.events.once('shutdown', this.onShutdown, this);
-    this.events.once('destroy',  this.onShutdown, this);
+    // items
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    for(const it of state.items){
+      const emoji = it.type==='coin'?'🪙':it.type==='bomb'?'🧨':'✨';
+      ctx.font = `${52*devicePixelRatio}px "Apple Color Emoji","Segoe UI Emoji",system-ui`;
+      ctx.fillText(emoji, it.x, it.y);
+    }
+    // basket
+    const bw=180*devicePixelRatio, bh=26*devicePixelRatio;
+    ctx.fillStyle='#ffd86a'; ctx.strokeStyle='#fff'; ctx.lineWidth=2*devicePixelRatio;
+    roundRect(ctx, state.basketX-bw/2, ground-bh/2, bw, bh, 6*devicePixelRatio, true, true);
+
+    ctx.restore();
   }
-  onShutdown(){
-    this.spawnEvt?.remove(); this.tickEvt?.remove();
-    if(this.collider){ this.physics.world.removeCollider(this.collider); this.collider=null; }
-    clearInterval(this.multTimerId); this.multTimerId=null; this.mult=1; hideMult();
-    this.resetCombo(); hideCombo();
-    this.input.keyboard?.removeAllListeners();
-    this.input.removeAllListeners();
+  function onPointer(type,x){
+    if(type==='move'){ state.basketX = clamp(x, 90*devicePixelRatio, W()-90*devicePixelRatio); }
   }
-  spawnDrop(){
-    const w=this.scale.width, r=Math.random();
-    let key='coin', type='coin';
-    if(r<0.14){ key='bomb2'; type='bomb'; }
-    else if(r>0.84){ key='star'; type='mult'; }
-    const x=Phaser.Math.Between(40,w-40);
-    const it=this.physics.add.image(x,-30,key).setData('type',type);
-    it.setBounce(0).setVelocity(0,120).setMaxVelocity(430,1100);
-    this.items.add(it);
-  }
-  activateMult(seconds){
-    this.mult=2; let left=seconds; multChip.textContent=`×2 active (${left}s)`; multChip.style.display='block';
-    clearInterval(this.multTimerId);
-    this.multTimerId=setInterval(()=>{ left--; if(left>0){ multChip.textContent=`×2 active (${left}s)`; } else { clearInterval(this.multTimerId); this.multTimerId=null; this.mult=1; hideMult(); } },1000);
-  }
-  bumpCombo(){
-    if(this.comboTimer){ this.combo=Math.min(this.combo+1,9); } else { this.combo=1; }
-    clearTimeout(this.comboTimer);
-    this.comboTimer=setTimeout(()=>{ this.combo=0; hideCombo(); },1500);
-    return this.combo>=5?3:this.combo>=3?2:1;
-  }
-  resetCombo(){ this.combo=0; clearTimeout(this.comboTimer); this.comboTimer=null; }
-  endGame(){
-    this.onShutdown();
-    saveScore('catch',this.score);
-    const {width,height}=this.scale;
-    const box=this.add.rectangle(width/2,height/2,width*.84,170,0x000000,.7);
-    const txt=this.add.text(width/2,height/2,`Time!\nScore: ${this.score}\nClick to return`,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
-    [box,txt].forEach(el=>el.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.toMenu()));
-  }
-  toMenu(){ this.scene.stop(); showMenu(); }
+
+  Engine.start(update, draw, ()=>{ clearTimeout(state.comboTO); }, onPointer);
 }
 
-/* ---------------- Boot & UI ---------------- */
-let game;
-const menu=document.getElementById('menu'), starter=document.getElementById('starter'), backBtn=document.getElementById('backBtn');
-const startBtn=document.getElementById('startBtn'), startTitle=document.getElementById('startTitle'), startHint=document.getElementById('startHint');
-const cd=document.getElementById('countdown'), backGameBtn=document.getElementById('backGameBtn');
-const lbOverlay=document.getElementById('leaderboardOverlay'), lbTables=document.getElementById('lbTables');
+/* ---------------- UI wiring ---------------- */
+const menu           = document.getElementById('menu');
+const starter        = document.getElementById('starter');
+const backBtn        = document.getElementById('backBtn');
+const startBtn       = document.getElementById('startBtn');
+const startTitle     = document.getElementById('startTitle');
+const startHint      = document.getElementById('startHint');
+const cd             = document.getElementById('countdown');
+const backGameBtn    = document.getElementById('backGameBtn');
+const lbOverlay      = document.getElementById('leaderboardOverlay');
+const lbTables       = document.getElementById('lbTables');
 
 function showMenu(){ hideCombo(); hideMult(); menu.style.display='grid'; starter.style.display='none'; backGameBtn.style.display='none'; }
 function hideMenu(){ menu.style.display='none'; }
-function stopAllScenes(){ game?.scene.getScenes(true).forEach(s=>game.scene.stop(s.scene.key)); }
+function stopAllScenes(){ Engine.stop(); }
 
 let pendingMode=null;
 function openStarter(mode){
   pendingMode=mode;
   startTitle.textContent = mode==='mole' ? 'Whack-a-Mole' : 'Catch the Coins';
-  startHint.textContent  = mode==='mole' ? 'Tap animals to score. Avoid bombs!' : 'Move basket to catch 🪙; avoid 🧨; grab ✨ for ×2!';
+  startHint.textContent  = mode==='mole' ? 'Tap animals to score. Avoid bombs!' :
+                           'Move basket to catch 🪙; avoid 🧨; grab ✨ for ×2!';
   starter.style.display='grid'; cd.style.display='none';
 }
-function startScene(mode){ stopAllScenes(); game.scene.start(mode); backGameBtn.style.display='inline-block'; }
+function startScene(mode){
+  stopAllScenes();
+  backGameBtn.style.display='inline-block';
+  if(mode==='mole') playMole(); else playCatch();
+}
 
 startBtn.onclick=()=>{ Sound.click(); cd.style.display='block'; let n=3; cd.textContent=n;
   const tick=()=>{ n--; if(n>0){ cd.textContent=n; setTimeout(tick,700); } else { starter.style.display='none'; startScene(pendingMode); } };
   setTimeout(tick,700);
 };
-backBtn.onclick=()=>{ Sound.click(); starter.style.display='none'; showMenu(); };
+backBtn.onclick = ()=>{ Sound.click(); starter.style.display='none'; showMenu(); };
 document.querySelectorAll('#menu [data-mode]').forEach(b=>b.addEventListener('click',()=>{ hideMenu(); openStarter(b.dataset.mode); }));
+backGameBtn.onclick=()=>{ Sound.click(); stopAllScenes(); showMenu(); };
+
+addEventListener('keydown',e=>{ if(e.key==='Escape'){ stopAllScenes(); showMenu(); }});
+
+/* leaderboard overlay */
 document.getElementById('openLeaderboard').onclick=()=>{ renderLB('all'); lbOverlay.style.display='grid'; };
 document.getElementById('closeLB').onclick=()=>{ lbOverlay.style.display='none'; };
 document.getElementById('clearLB').onclick=()=>{ ['mole','catch'].forEach(g=>{localStorage.removeItem(`lb_${g}`);localStorage.removeItem(`best_${g}`)}); renderLB('all'); };
-backGameBtn.onclick=()=>{ Sound.click(); stopAllScenes(); showMenu(); };
-
+document.querySelectorAll('#lbTabs [data-lb]').forEach(b=>b.onclick=()=>renderLB(b.dataset.lb));
 function renderLB(which){
   const games=which==='all'?['mole','catch']:[which];
   lbTables.innerHTML=games.map(g=>{
@@ -396,19 +432,24 @@ function renderLB(which){
   }).join('');
 }
 
-document.getElementById('claim').onclick=()=>{ const s=game?.scene.getScenes(true)[0]; if(s) toast(s,'Reward claimed!'); };
+/* claim button */
+document.getElementById('claim').onclick=()=>toast('Reward claimed!');
 
-window.addEventListener('load', () => {
-  game = new Phaser.Game({
-    type: Phaser.AUTO,
-    backgroundColor: '#090a16',
-    scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH, width: W(), height: H() },
-    physics: { default: 'arcade', arcade: { debug: false } },
-    scene: [MoleScene, CatchScene]
-  });
-  window.addEventListener('resize', () => game.scale.resize(W(), H()));
-  showMenu();
-});
+/* utils */
+function between(a,b){ return a*devicePixelRatio + Math.random()*(b*devicePixelRatio - a*devicePixelRatio); }
+function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
+function roundRect(ctx,x,y,w,h,r,fill,stroke){
+  if(w<2*r) r=w/2; if(h<2*r) r=h/2;
+  ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+  if(fill) ctx.fill(); if(stroke) ctx.stroke();
+}
+
+/* boot */
+function layout(){ W(); H(); }
+window.addEventListener('resize', layout, {passive:true});
+layout();
+showMenu();
 </script>
 </body>
 </html>
