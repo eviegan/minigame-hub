@@ -1,25 +1,25 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Mini Game Hub</title>
-  <style>
-    :root { color-scheme: dark; }
-    html,body{height:100%;margin:0;background:#090a16;color:#eef4ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-    canvas{display:block;width:100%;height:100%}
-    #menu,#leaderboardOverlay{position:fixed;inset:0;display:none;place-items:center;z-index:5;background:linear-gradient(180deg,#0a0718 0%,#090a16 100%)}
-    .card{width:min(560px,92%);background:#0f1226;border:1px solid #243;border-radius:16px;padding:20px;box-shadow:0 20px 60px #0007;text-align:center}
-    .grid{display:grid;gap:12px;margin-top:14px}
-    .primary{background:#8a5dff;color:#0a0718;font-weight:800;border:0;padding:12px 16px;border-radius:14px;cursor:pointer;font-size:18px}
-    .ghost{background:#1b2040;color:#cfe1ff;border:1px solid #2b325d;padding:10px 14px;border-radius:10px;cursor:pointer;font-size:16px}
-    #hud{position:fixed;right:12px;bottom:12px;background:#0008;backdrop-filter:blur(8px);padding:8px 12px;border-radius:12px;z-index:4}
-    #hud button{border:0;border-radius:12px;padding:8px 12px;font-weight:700;cursor:pointer}
-    table{width:100%;border-collapse:collapse;margin-top:12px}
-    th,td{padding:8px 10px;border-bottom:1px solid #2b325d;text-align:left}
-    .muted{color:#a9b7d8}
-  </style>
-  <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Mini Game Hub</title>
+<style>
+  :root { color-scheme: dark; }
+  html,body{height:100%;margin:0;background:#090a16;color:#eef4ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  canvas{display:block;width:100%;height:100%}
+  #menu,#leaderboardOverlay{position:fixed;inset:0;display:none;place-items:center;z-index:5;background:linear-gradient(180deg,#0a0718 0%,#090a16 100%)}
+  .card{width:min(560px,92%);background:#0f1226;border:1px solid #243;border-radius:16px;padding:20px;box-shadow:0 20px 60px #0007;text-align:center}
+  .grid{display:grid;gap:12px;margin-top:14px}
+  .primary{background:#8a5dff;color:#0a0718;font-weight:800;border:0;padding:12px 16px;border-radius:14px;cursor:pointer;font-size:18px}
+  .ghost{background:#1b2040;color:#cfe1ff;border:1px solid #2b325d;padding:10px 14px;border-radius:10px;cursor:pointer;font-size:16px}
+  #hud{position:fixed;right:12px;bottom:12px;background:#0008;backdrop-filter:blur(8px);padding:8px 12px;border-radius:12px;z-index:4}
+  #hud button{border:0;border-radius:12px;padding:8px 12px;font-weight:700;cursor:pointer}
+  table{width:100%;border-collapse:collapse;margin-top:12px}
+  th,td{padding:8px 10px;border-bottom:1px solid #2b325d;text-align:left}
+  .muted{color:#a9b7d8}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
 </head>
 <body>
   <div id="hud"><button id="claim">Claim reward</button></div>
@@ -62,7 +62,7 @@
 const W=()=>innerWidth, H=()=>innerHeight;
 const SETTINGS={
   rewardThreshold:{ mole:10, catch:12 },
-  mole:{ duration:25, gridSmall:3, gridLarge:4, popEvery:700, upTime:750 }, // seconds, grid, ms
+  mole:{ duration:25, gridSmall:3, gridLarge:4, popEvery:650, upTime:800 }, // s / grid / ms
   wheelDailyLimit:3
 };
 const todayKey=()=>new Date().toISOString().slice(0,10);
@@ -83,20 +83,24 @@ const getScores=(g)=>{try{return JSON.parse(localStorage.getItem(`lb_${g}`)||"[]
 const incSpinCount=()=>localStorage.setItem(`wheel_${todayKey()}`,((+localStorage.getItem(`wheel_${todayKey()}`)||0)+1).toString());
 const getSpinCount=()=>+localStorage.getItem(`wheel_${todayKey()}`)||0;
 
+/* helpers to generate textures at runtime */
 function makeRectTexture(scene,key,w,h,fill,stroke=0xffffff){
   if(scene.textures.exists(key))return;
   const g=scene.add.graphics(); g.fillStyle(fill,1).fillRoundedRect(0,0,w,h,6);
   g.lineStyle(2,stroke,1).strokeRoundedRect(0,0,w,h,6); g.generateTexture(key,w,h); g.destroy();
 }
-function makeCircleTexture(scene,key,r,fill,stroke=0xffffff){
+function makeEmojiTexture(scene,key,emoji,size=48){
   if(scene.textures.exists(key))return;
-  const g=scene.add.graphics(); g.fillStyle(fill,1).fillCircle(r,r,r);
-  g.lineStyle(2,stroke,1).strokeCircle(r,r,r); g.generateTexture(key,r*2,r*2); g.destroy();
+  const c=document.createElement('canvas'); c.width=c.height=size;
+  const ctx=c.getContext('2d'); ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.font=`${Math.floor(size*0.9)}px "Apple Color Emoji","Segoe UI Emoji",sans-serif`;
+  ctx.fillText(emoji,size/2,size/2);
+  scene.textures.addImage(key,c);
 }
 
-/* ------------------------ Whack-a-Mole ------------------------ */
+/* ------------------------ Whack-a-Mole (animals + bomb) ------------------------ */
 class MoleScene extends Phaser.Scene{
-  constructor(){ super('mole'); this.score=0; this.timeLeft=SETTINGS.mole.duration; this.rewarded=false; this.holes=[]; this.active=null; }
+  constructor(){ super('mole'); this.score=0; this.timeLeft=SETTINGS.mole.duration; this.rewarded=false; this.holes=[]; }
   create(){
     const {width,height}=this.scale;
     this.cameras.main.setBackgroundColor('#0a0718');
@@ -105,50 +109,73 @@ class MoleScene extends Phaser.Scene{
     this.timerText=this.add.text(width-20,16,this.timeLeft+'s',{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
 
     // textures
-    makeCircleTexture(this,'holeRim',36,0x1b2040,0x2b325d);
-    makeCircleTexture(this,'mole',26,0x7b4d2a);
+    makeEmojiTexture(this,'emoji_hamster','🐹',64);
+    makeEmojiTexture(this,'emoji_cat','🐱',64);
+    makeEmojiTexture(this,'emoji_dog','🐶',64);
+    makeEmojiTexture(this,'emoji_rabbit','🐰',64);
+    makeEmojiTexture(this,'emoji_bomb','💣',64);
+    makeRectTexture(this,'holePlate',96,28,0x1b2040,0x2b325d);
 
-    // grid layout
-    const cols = (Math.min(width,height)<720)?SETTINGS.mole.gridSmall:SETTINGS.mole.gridLarge;
-    const rows = cols;
-    const gridW = Math.min(width*0.9, height*0.78);
-    const cell = gridW/cols;
-    const startX = width/2 - gridW/2 + cell/2;
-    const startY = height*0.2 + cell/2;
+    // grid
+    const cols=(Math.min(width,height)<720)?SETTINGS.mole.gridSmall:SETTINGS.mole.gridLarge;
+    const rows=cols;
+    const gridW=Math.min(width*0.9,height*0.78);
+    const cell=gridW/cols, startX=width/2-gridW/2+cell/2, startY=height*0.2+cell/2;
 
-    // holes + moles
+    // particles for bomb boom
+    const boom = this.add.particles(0,0,'holePlate');
+    const emitter = boom.createEmitter({
+      speed: {min:150,max:260}, lifespan: 400, alpha:{start:1,end:0}, scale:{start:.3,end:0},
+      emitting:false, tint:0xff4444
+    });
+
+    const animals=['emoji_hamster','emoji_cat','emoji_dog','emoji_rabbit'];
+
     for(let r=0;r<rows;r++){
       for(let c=0;c<cols;c++){
-        const x = startX + c*cell, y = startY + r*cell;
-        const hole = this.add.image(x,y,'holeRim').setScale(1.1);
-        const mole = this.add.image(x,y+12,'mole').setVisible(false).setInteractive({useHandCursor:true});
-        mole.on('pointerdown', ()=>{
-          if(mole.visible){
-            this.score++; this.scoreText.setText('Score: '+this.score);
-            this.tweens.add({targets:mole, y:mole.y-12, duration:80, yoyo:true, onComplete:()=>mole.visible=false});
-            if(!this.rewarded && this.score>=SETTINGS.rewardThreshold.mole){ this.rewarded=true; toast(this,'🎉 Reward unlocked!'); }
+        const x=startX+c*cell, y=startY+r*cell;
+        const plate=this.add.image(x,y+20,'holePlate').setScale(1);
+        const face=this.add.image(x,y,'emoji_hamster').setVisible(false).setInteractive({useHandCursor:true});
+
+        face.on('pointerdown',()=>{
+          if(!face.visible)return;
+          if(face.getData('type')==='bomb'){
+            this.cameras.main.shake(120,0.003);
+            emitter.setPosition(face.x,face.y); emitter.explode(16);
+            this.score=Math.max(0,this.score-2);
+          }else{
+            this.score+=1;
           }
+          this.scoreText.setText('Score: '+this.score);
+          this.tweens.add({targets:face, y:face.y-12, duration:90, yoyo:true, onComplete:()=>face.setVisible(false)});
+          if(!this.rewarded && this.score>=SETTINGS.rewardThreshold.mole){ this.rewarded=true; toast(this,'🎉 Reward unlocked!'); }
         });
-        this.holes.push({hole,mole});
+
+        this.holes.push({plate,face});
       }
     }
 
-    // pop moles
+    // pop logic
     this.popEvt=this.time.addEvent({ delay:SETTINGS.mole.popEvery, loop:true, callback:()=>{
-      const free = this.holes.filter(h=>!h.mole.visible);
-      if(!free.length) return;
-      const h = Phaser.Utils.Array.GetRandom(free);
-      h.mole.y = h.hole.y+12; h.mole.setVisible(true);
-      this.tweens.add({targets:h.mole, y:h.hole.y-10, duration:120, ease:'Sine.easeOut'});
-      this.time.delayedCall(SETTINGS.mole.upTime, ()=>{
-        if(h.mole.visible){
-          this.tweens.add({targets:h.mole, y:h.hole.y+20, duration:160, onComplete:()=>h.mole.setVisible(false)});
+      const free=this.holes.filter(h=>!h.face.visible);
+      if(!free.length)return;
+      const h=Phaser.Utils.Array.GetRandom(free);
+
+      const isBomb=Math.random()<0.18; // 18% bomb
+      const tex=isBomb ? 'emoji_bomb' : Phaser.Utils.Array.GetRandom(animals);
+      h.face.setTexture(tex).setData('type', isBomb ? 'bomb' : 'animal');
+      h.face.y=h.plate.y; h.face.setVisible(true);
+      this.tweens.add({targets:h.face,y:h.plate.y-28,duration:120,ease:'Sine.easeOut'});
+
+      this.time.delayedCall(SETTINGS.mole.upTime,()=>{
+        if(h.face.visible){
+          this.tweens.add({targets:h.face,y:h.plate.y+24,duration:160,onComplete:()=>h.face.setVisible(false)});
         }
       });
     }});
 
     // timer
-    this.time.addEvent({ delay:1000, loop:true, callback:()=>{
+    this.time.addEvent({delay:1000,loop:true,callback:()=>{
       this.timeLeft--; this.timerText.setText(this.timeLeft+'s');
       if(this.timeLeft<=0) this.endGame();
     }});
@@ -167,7 +194,7 @@ class MoleScene extends Phaser.Scene{
   returnToMenu(){ this.scene.stop(); showMenu(); }
 }
 
-/* ------------------------ Catch the Coins ------------------------ */
+/* ------------------------ Catch the Coins (emoji coins + full fall) ------------------------ */
 class CatchScene extends Phaser.Scene{
   constructor(){ super('catch'); this.score=0; this.timeLeft=25; this.rewarded=false; }
   create(){
@@ -177,29 +204,35 @@ class CatchScene extends Phaser.Scene{
     this.scoreText=this.add.text(20,16,'Score: 0',{fontSize:'20px',color:'#8EFF98'});
     this.timerText=this.add.text(width-20,16,this.timeLeft+'s',{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
 
-    makeRectTexture(this,'basketRect',160,24,0xffd86a);
-    makeCircleTexture(this,'coinCircle',16,0x56d0ff);
+    makeEmojiTexture(this,'emoji_coin','🪙',52);
+    makeRectTexture(this,'basketRect',180,26,0xffd86a);
+
+    // ensure world bounds match the canvas so bodies fall all the way
+    this.physics.world.setBounds(0,0,width,height);
 
     this.basket=this.physics.add.image(width/2,height-60,'basketRect').setImmovable(true);
     this.basket.body.allowGravity=false;
 
-    this.coins=this.physics.add.group({allowGravity:false});
+    this.coins=this.physics.add.group({allowGravity:true, gravityY: 700});
     this.physics.add.overlap(this.basket,this.coins,(_,coin)=>{
       this.score++; this.scoreText.setText('Score: '+this.score); coin.destroy();
       if(!this.rewarded && this.score>=SETTINGS.rewardThreshold.catch){ this.rewarded=true; toast(this,'🎉 Reward unlocked!'); }
     });
 
-    this.time.addEvent({delay:480,loop:true,callback:()=>{
-      const x=Phaser.Math.Between(30,width-30);
-      const coin=this.physics.add.image(x,-20,'coinCircle'); coin.setVelocity(0,Phaser.Math.Between(260,360));
+    this.time.addEvent({delay:500,loop:true,callback:()=>{
+      const x=Phaser.Math.Between(40,width-40);
+      const coin=this.physics.add.image(x,-30,'emoji_coin');
+      coin.setBounce(0).setVelocity(0,120).setMaxVelocity(400,1000).setCollideWorldBounds(false);
       this.coins.add(coin);
+      // spawn flash
       const flash=this.add.rectangle(x,0,6,30,0xffffff).setAlpha(.7);
       this.tweens.add({targets:flash,alpha:0,y:60,duration:350,onComplete:()=>flash.destroy()});
     }});
-    this.events.on('update',()=>this.coins.children.iterate(c=>{ if(c&&c.y>height+50)c.destroy(); }));
 
-    this.input.on('pointermove',p=>{ this.basket.x=Phaser.Math.Clamp(p.x,80,width-80); this.basket.body.updateFromGameObject(); });
+    // clean if somehow past bottom
+    this.events.on('update',()=>this.coins.children.iterate(c=>{ if(c&&c.y>height+60)c.destroy(); }));
 
+    this.input.on('pointermove',p=>{ this.basket.x=Phaser.Math.Clamp(p.x,90,width-90); this.basket.body.updateFromGameObject(); });
     this.time.addEvent({delay:1000,loop:true,callback:()=>{ this.timeLeft--; this.timerText.setText(this.timeLeft+'s'); if(this.timeLeft<=0)this.endGame(); }});
     this.input.keyboard.on('keydown-ESC',()=>this.returnToMenu());
   }
@@ -214,7 +247,7 @@ class CatchScene extends Phaser.Scene{
   returnToMenu(){ this.scene.stop(); showMenu(); }
 }
 
-/* ------------------------ Spin the Wheel (3/day) ------------------------ */
+/* ------------------------ Spin the Wheel (unchanged) ------------------------ */
 class WheelScene extends Phaser.Scene{
   constructor(){ super('wheel'); this.spinning=false; }
   create(){
@@ -228,7 +261,6 @@ class WheelScene extends Phaser.Scene{
     const prizes=['+10','+20','+30','+50','Try again','x2','+15','Jackpot'];
     const seg=(Math.PI*2)/prizes.length;
 
-    // draw to texture
     const g=this.add.graphics({x:0,y:0});
     for(let i=0;i<prizes.length;i++){
       g.fillStyle(i%2?0x8a5dff:0x56d0ff,1);
