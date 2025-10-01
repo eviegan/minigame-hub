@@ -31,7 +31,6 @@
 
   #errBadge{position:fixed;right:12px;top:12px;background:#4b1010;border:1px solid #7d1b1b;border-radius:10px;padding:8px 12px;display:none;z-index:9}
 </style>
-
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
@@ -83,7 +82,7 @@
   </div>
 
 <script>
-/* quick error badge */
+/* error badge */
 (() => {
   const badge = document.getElementById('errBadge');
   const show = (m) => { badge.textContent = m; badge.style.display = 'block'; };
@@ -91,7 +90,7 @@
   addEventListener('unhandledrejection',e => show(String(e.reason)));
 })();
 
-/* tiny sound engine */
+/* sounds */
 const Sound = (() => {
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
   const resume = () => ctx.state === 'suspended' && ctx.resume();
@@ -143,32 +142,37 @@ function saveScore(game,value){
 const getScores=(g)=>{try{return JSON.parse(localStorage.getItem(`lb_${g}`)||"[]")}catch(e){return[]}};
 const getBest  =(g)=>+localStorage.getItem(`best_${g}`)||0;
 
-function makeRectTexture(scene,key,w,h,fill,stroke=0xffffff){
+/* PURE-canvas texture makers (no Phaser graphics/timers at all) */
+function makeRectTexture(scene,key,w,h,fillHex,strokeHex=0xffffff){
   if(scene.textures.exists(key)) return;
-  const g=scene.make.graphics({add:false});   // <— use make.graphics, not add.graphics
-  g.fillStyle(fill,1).fillRoundedRect(0,0,w,h,6);
-  g.lineStyle(2,stroke,1).strokeRoundedRect(0,0,w,h,6);
-  g.generateTexture(key,w,h);
-  g.destroy();
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const ctx=c.getContext('2d');
+  const r=6;
+  const rr=(x,y,w,h,r)=>{ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+    ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);ctx.lineTo(x+r,y+h);
+    ctx.quadraticCurveTo(x,y+h,x,y+h-r);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();}
+  // fill
+  ctx.fillStyle = '#'+fillHex.toString(16).padStart(6,'0');
+  rr(1,1,w-2,h-2,r); ctx.fill();
+  // stroke
+  ctx.lineWidth=2; ctx.strokeStyle='#'+strokeHex.toString(16).padStart(6,'0'); ctx.stroke();
+  scene.textures.addCanvas(key,c);
 }
 function makeEmojiTexture(scene,key,emoji,size=48){
   if(scene.textures.exists(key)) return;
   const c=document.createElement('canvas'); c.width=c.height=size;
-  const x=c.getContext('2d');
-  x.textAlign='center'; x.textBaseline='middle';
+  const x=c.getContext('2d'); x.textAlign='center'; x.textBaseline='middle';
   x.font=`${Math.floor(size*0.9)}px "Apple Color Emoji","Segoe UI Emoji",sans-serif`;
   x.fillText(emoji,size/2,size/2);
   scene.textures.addCanvas(key,c);
 }
 
-
-/* ---------------- Whack-a-Mole (scene-timer free clicks) ---------------- */
+/* ---------------- Whack-a-Mole ---------------- */
 class MoleScene extends Phaser.Scene{
   constructor(){
     super('mole');
     this.score=0; this.timeLeft=SETTINGS.mole.duration;
-    this.holes=[]; this.combo=0; this.comboTimer=null;
-    this._timeouts=[]; // track setTimeouts to clear on shutdown
+    this.holes=[]; this.combo=0; this.comboTimer=null; this._timeouts=[];
   }
 
   create(){
@@ -188,7 +192,6 @@ class MoleScene extends Phaser.Scene{
 
     const hideFace=(f)=>{ f.disableInteractive(); f.setVisible(false).setActive(false); };
     const setT=(cb,ms)=>{ const id=setTimeout(cb,ms); this._timeouts.push(id); return id; };
-    const clearAllTimeouts=()=>{ this._timeouts.forEach(clearTimeout); this._timeouts.length=0; };
 
     for(let r=0;r<rows;r++){
       for(let c=0;c<cols;c++){
@@ -199,10 +202,9 @@ class MoleScene extends Phaser.Scene{
 
         face.on('pointerdown',()=>{
           if(!face.visible || !face.active) return;
-
           const isBomb = face.getData('type')==='bomb';
           face.setScale(0.9);
-          setT(()=>{ if(face.visible && face.active) face.setScale(1); },90); // no scene timer
+          setT(()=>{ if(face.visible && face.active) face.setScale(1); },90);
 
           if(isBomb){
             this.cameras.main.shake(120,0.003); Sound.boom();
@@ -215,7 +217,7 @@ class MoleScene extends Phaser.Scene{
           this.scoreText.setText(String(this.score));
         });
 
-        this.holes.push({plate,face,hideFace,clearAllTimeouts});
+        this.holes.push({plate,face,hideFace});
       }
     }
 
@@ -226,7 +228,6 @@ class MoleScene extends Phaser.Scene{
       const key=isBomb ? 'bomb' : Phaser.Utils.Array.GetRandom(['ham','cat','dog','rab']);
       h.face.setTexture(key).setData('type', isBomb?'bomb':'animal').setScale(0.85)
            .setActive(true).setVisible(true).setInteractive({useHandCursor:true});
-      // scale in & auto hide using plain timeouts to avoid scene timer after stop
       this._timeouts.push(setTimeout(()=>{ if(h.face.visible && h.face.active) h.face.setScale(1); },100));
       this._timeouts.push(setTimeout(()=>{ if(h.face.visible && h.face.active) h.hideFace(h.face); },780));
     }});
@@ -237,7 +238,6 @@ class MoleScene extends Phaser.Scene{
     }});
 
     this.input.keyboard.on('keydown-ESC',()=>this.toMenu());
-
     this.events.once('shutdown', this.onShutdown, this);
     this.events.once('destroy',  this.onShutdown, this);
   }
@@ -269,7 +269,7 @@ class MoleScene extends Phaser.Scene{
   toMenu(){ this.scene.stop(); showMenu(); }
 }
 
-/* ---------------- Catch the Coins (robust cleanup) ---------------- */
+/* ---------------- Catch the Coins ---------------- */
 class CatchScene extends Phaser.Scene{
   constructor(){ super('catch'); this.score=0; this.timeLeft=25; this.combo=0; this.comboTimer=null; this.mult=1; this.multTimerId=null; this.items=null; this.basket=null; this.collider=null; }
   create(){
@@ -356,17 +356,10 @@ class CatchScene extends Phaser.Scene{
 
 /* ---------------- Boot & UI ---------------- */
 let game;
-
-const menu=document.getElementById('menu');
-const starter=document.getElementById('starter');
-const backBtn=document.getElementById('backBtn');
-const startBtn=document.getElementById('startBtn');
-const startTitle=document.getElementById('startTitle');
-const startHint=document.getElementById('startHint');
-const cd=document.getElementById('countdown');
-const backGameBtn=document.getElementById('backGameBtn');
-const lbOverlay=document.getElementById('leaderboardOverlay');
-const lbTables=document.getElementById('lbTables');
+const menu=document.getElementById('menu'), starter=document.getElementById('starter'), backBtn=document.getElementById('backBtn');
+const startBtn=document.getElementById('startBtn'), startTitle=document.getElementById('startTitle'), startHint=document.getElementById('startHint');
+const cd=document.getElementById('countdown'), backGameBtn=document.getElementById('backGameBtn');
+const lbOverlay=document.getElementById('leaderboardOverlay'), lbTables=document.getElementById('lbTables');
 
 function showMenu(){ hideCombo(); hideMult(); menu.style.display='grid'; starter.style.display='none'; backGameBtn.style.display='none'; }
 function hideMenu(){ menu.style.display='none'; }
@@ -413,7 +406,6 @@ window.addEventListener('load', () => {
     physics: { default: 'arcade', arcade: { debug: false } },
     scene: [MoleScene, CatchScene]
   });
-
   window.addEventListener('resize', () => game.scale.resize(W(), H()));
   showMenu();
 });
