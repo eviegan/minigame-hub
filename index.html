@@ -1,149 +1,215 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Mini Game Hub 🎮</title>
   <style>
     :root { color-scheme: dark; }
     html,body { height:100%; margin:0; background:#090a16; color:#eef4ff; font-family:system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
-    #hud { position:fixed; right:12px; bottom:12px; background:#0008; backdrop-filter: blur(8px); padding:8px 12px; border-radius:12px; z-index:5 }
-    #hud button { border:0; border-radius:12px; padding:8px 12px; font-weight:700; cursor:pointer }
-    #menu { position:fixed; inset:0; display:grid; place-items:center; background:linear-gradient(180deg,#0a0718 0%, #090a16 100%); z-index:4 }
-    #menu .card { text-align:center; }
-    #menu h1 { margin:0 0 6px; font-size:32px }
-    #menu p { margin:0 0 18px; color:#a9b7d8 }
-    #menu .grid { display:grid; gap:12px; }
-    #menu .grid button { font-size:18px; padding:10px 16px; border-radius:14px; border:0; cursor:pointer; background:#8a5dff; color:#0a0718; font-weight:700 }
     canvas { display:block; width:100%; height:100%; }
+    #menu, #leaderboardOverlay {
+      position:fixed; inset:0; display:none; place-items:center; z-index:5;
+      background:linear-gradient(180deg,#0a0718 0%, #090a16 100%);
+    }
+    #menu .card, #leaderboardOverlay .card {
+      width:min(560px, 92%); background:#0f1226; border:1px solid #243; border-radius:16px; padding:20px; box-shadow:0 20px 60px #0007; text-align:center;
+    }
+    .grid { display:grid; gap:12px; margin-top:14px; }
+    .primary { background:#8a5dff; color:#0a0718; font-weight:800; border:0; padding:12px 16px; border-radius:14px; cursor:pointer; font-size:18px }
+    .ghost { background:#1b2040; color:#cfe1ff; border:1px solid #2b325d; padding:10px 14px; border-radius:10px; cursor:pointer; font-size:16px }
+    #hud { position:fixed; right:12px; bottom:12px; background:#0008; backdrop-filter: blur(8px); padding:8px 12px; border-radius:12px; z-index:4 }
+    #hud button { border:0; border-radius:12px; padding:8px 12px; font-weight:700; cursor:pointer }
+    table { width:100%; border-collapse:collapse; margin-top:12px; }
+    th, td { padding:8px 10px; border-bottom:1px solid #2b325d; text-align:left; }
+    .muted { color:#a9b7d8 }
   </style>
   <!-- Phaser CDN -->
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
 </head>
 <body>
-  <!-- In-game claim button (demo toast) -->
+  <!-- HUD -->
   <div id="hud"><button id="claim">Claim reward</button></div>
 
-  <!-- Game menu overlay -->
+  <!-- Menu -->
   <div id="menu">
     <div class="card">
-      <h1>Mini Game Hub 🎮</h1>
-      <p>Pick a game. ESC returns here.</p>
+      <h1 style="margin:0 0 6px">Mini Game Hub 🎮</h1>
+      <p class="muted" style="margin:0 0 16px">Pick a game. Press <b>ESC</b> to return here.</p>
       <div class="grid">
-        <button data-mode="dodge">🚗 Dodge</button>
-        <button data-mode="catch">🥤 Catch</button>
-        <button data-mode="clicker">👆 Clicker</button>
+        <button class="primary" data-mode="dodge">🚗 Dodge</button>
+        <button class="primary" data-mode="catch">🥤 Catch</button>
+        <button class="primary" data-mode="wheel">🎡 Spin (3/day)</button>
+        <button class="ghost" id="openLeaderboard">🏆 Leaderboard</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Leaderboard -->
+  <div id="leaderboardOverlay">
+    <div class="card">
+      <h2 style="margin:0 0 6px">🏆 Leaderboard</h2>
+      <p class="muted" style="margin:0 0 10px">Top 5 per game (saved on your device)</p>
+      <div id="lbTabs" class="grid" style="grid-template-columns:repeat(4,1fr)">
+        <button class="ghost" data-lb="dodge">Dodge</button>
+        <button class="ghost" data-lb="catch">Catch</button>
+        <button class="ghost" data-lb="wheel">Wheel</button>
+        <button class="ghost" data-lb="all">All</button>
+      </div>
+      <div id="lbTables" style="margin-top:10px; text-align:left"></div>
+      <div style="display:flex; gap:8px; justify-content:center; margin-top:14px">
+        <button class="ghost" id="clearLB">Clear my scores</button>
+        <button class="primary" id="closeLB">Close</button>
       </div>
     </div>
   </div>
 
   <script>
-  // --------- Shared helpers ----------
-  const W = () => window.innerWidth;
-  const H = () => window.innerHeight;
+  // ================== Utilities ==================
+  const W = () => innerWidth, H = () => innerHeight;
+  const SETTINGS = {
+    rewardThreshold: { dodge: 20, catch: 15 }, // auto reward when score >= threshold
+    wheelDailyLimit: 3
+  };
+  const todayKey = () => new Date().toISOString().slice(0,10);
 
-  function toast(scene, msg) {
+  function toast(scene, msg){
     const t = scene.add.text(scene.scale.width/2, scene.scale.height*0.85, msg, {
       fontSize:'22px', color:'#fff', backgroundColor:'#0008', padding:{x:12,y:8}
     }).setOrigin(0.5);
     scene.tweens.add({ targets:t, alpha:0, duration:1200, delay:800, onComplete:()=>t.destroy() });
   }
 
-  // --------- Dodge (avoid obstacles) ----------
+  function saveScore(game, value){
+    try{
+      const key = `lb_${game}`;
+      const list = JSON.parse(localStorage.getItem(key) || "[]");
+      list.push({ score:value, ts:Date.now() });
+      list.sort((a,b)=>b.score-a.score);
+      localStorage.setItem(key, JSON.stringify(list.slice(0,5)));
+    }catch(e){}
+  }
+  function getScores(game){
+    try{ return JSON.parse(localStorage.getItem(`lb_${game}`) || "[]"); }catch(e){ return []; }
+  }
+  function incSpinCount(){
+    const key = `wheel_${todayKey()}`;
+    const count = +localStorage.getItem(key) || 0;
+    localStorage.setItem(key, (count+1).toString());
+  }
+  function getSpinCount(){
+    const key = `wheel_${todayKey()}`;
+    return +localStorage.getItem(key) || 0;
+  }
+
+  // ================== Scenes ==================
   class DodgeScene extends Phaser.Scene {
-    constructor(){ super('dodge'); this.score=0; this.timeLeft=30; this.speed=180; }
+    constructor(){ super('dodge'); this.score=0; this.timeLeft=30; this.speed=240; this.rewarded=false; }
     create(){
       const { width, height } = this.scale;
       this.cameras.main.setBackgroundColor('#0a0718');
-      this.add.text(width/2, 30, '🚗 Dodge', { fontSize:'24px', color:'#fff' }).setOrigin(0.5);
-      this.scoreText = this.add.text(20, 20, 'Score: 0', { fontSize:'20px', color:'#8EFF98' });
-      this.timerText = this.add.text(width-20, 20, this.timeLeft+'s', { fontSize:'20px', color:'#ffd86a' }).setOrigin(1,0);
+      this.add.text(width/2, 28, '🚗 Dodge', { fontSize:'24px', color:'#fff' }).setOrigin(0.5);
+      this.scoreText = this.add.text(20, 16, 'Score: 0', { fontSize:'20px', color:'#8EFF98' });
+      this.timerText = this.add.text(width-20, 16, this.timeLeft+'s', { fontSize:'20px', color:'#ffd86a' }).setOrigin(1,0);
 
       // Player
-      this.player = this.add.rectangle(width/2, height-40, 50, 20, 0xffd86a).setStrokeStyle(2,0xffffff);
+      this.player = this.add.rectangle(width/2, height-50, 64, 22, 0xffd86a).setStrokeStyle(2,0xffffff);
       this.physics.add.existing(this.player);
       this.player.body.setCollideWorldBounds(true);
 
-      // Controls
       this.cursors = this.input.keyboard.createCursorKeys();
-      this.input.on('pointermove', p => { this.player.x = Phaser.Math.Clamp(p.x, 25, width-25); });
+      this.input.on('pointermove', p => { this.player.x = Phaser.Math.Clamp(p.x, 32, width-32); });
 
-      // Obstacles
+      // Obstacles (more frequent, larger)
       this.obstacles = this.physics.add.group();
-      this.time.addEvent({ delay: 600, loop: true, callback: () => {
-        const x = Phaser.Math.Between(20, width-20);
-        const s = this.add.rectangle(x, -20, Phaser.Math.Between(20, 60), 14, 0x8a5dff);
+      this.time.addEvent({ delay: 450, loop: true, callback: () => {
+        const x = Phaser.Math.Between(24, width-24);
+        const w = Phaser.Math.Between(28, 70);
+        const s = this.add.rectangle(x, -20, w, 16, 0x8a5dff);
         this.physics.add.existing(s);
-        s.body.setVelocity(0, Phaser.Math.Between(140, 240));
+        s.body.setVelocity(0, Phaser.Math.Between(180, 280));
         this.obstacles.add(s);
       }});
 
-      // Collisions
       this.physics.add.overlap(this.player, this.obstacles, () => this.gameOver(), null, this);
 
       // Timer + scoring
       this.time.addEvent({ delay: 1000, loop:true, callback: () => {
         this.timeLeft--; this.timerText.setText(this.timeLeft+'s');
         this.score += 1; this.scoreText.setText('Score: '+this.score);
+
+        if(!this.rewarded && this.score >= SETTINGS.rewardThreshold.dodge){
+          this.rewarded = true;
+          toast(this, '🎉 Reward unlocked!');
+          document.getElementById('claim').classList.add('pulse');
+        }
         if(this.timeLeft<=0) this.gameOver(true);
       }});
 
       this.input.keyboard.on('keydown-ESC', () => this.returnToMenu());
     }
     update(){
-      // Keyboard move
       if(this.cursors.left.isDown) this.player.body.setVelocityX(-this.speed);
       else if(this.cursors.right.isDown) this.player.body.setVelocityX(this.speed);
       else this.player.body.setVelocityX(0);
     }
     gameOver(timeUp=false){
       this.scene.pause();
+      saveScore('dodge', this.score);
       const { width, height } = this.scale;
-      const box = this.add.rectangle(width/2, height/2, width*0.8, 170, 0x000000, 0.7);
       const msg = (timeUp ? 'Time! ' : 'Crashed! ') + `Score: ${this.score}\nClick to return`;
-      const txt = this.add.text(width/2, height/2, msg, { fontSize:'22px', color:'#fff', align:'center' }).setOrigin(0.5);
-      [box, txt].forEach(el => el.setInteractive({ useHandCursor:true }).on('pointerdown', ()=> this.returnToMenu()));
+      this.overlay(msg, ()=> this.returnToMenu());
+    }
+    overlay(message, onClick){
+      const { width, height } = this.scale;
+      const box = this.add.rectangle(width/2, height/2, width*0.84, 170, 0x000000, 0.7);
+      const txt = this.add.text(width/2, height/2, message, { fontSize:'22px', color:'#fff', align:'center' }).setOrigin(0.5);
+      ;[box, txt].forEach(el=>el.setInteractive({useHandCursor:true}).on('pointerdown', onClick));
     }
     returnToMenu(){ this.scene.stop(); showMenu(); }
   }
 
-  // --------- Catch (catch coins) ----------
   class CatchScene extends Phaser.Scene {
-    constructor(){ super('catch'); this.score=0; this.timeLeft=30; }
+    constructor(){ super('catch'); this.score=0; this.timeLeft=30; this.rewarded=false; }
     create(){
       const { width, height } = this.scale;
       this.cameras.main.setBackgroundColor('#0a0718');
-      this.add.text(width/2, 30, '🥤 Catch', { fontSize:'24px', color:'#fff' }).setOrigin(0.5);
-      this.scoreText = this.add.text(20, 20, 'Score: 0', { fontSize:'20px', color:'#8EFF98' });
-      this.timerText = this.add.text(width-20, 20, this.timeLeft+'s', { fontSize:'20px', color:'#ffd86a' }).setOrigin(1,0);
+      this.add.text(width/2, 28, '🥤 Catch', { fontSize:'24px', color:'#fff' }).setOrigin(0.5);
+      this.scoreText = this.add.text(20, 16, 'Score: 0', { fontSize:'20px', color:'#8EFF98' });
+      this.timerText = this.add.text(width-20, 16, this.timeLeft+'s', { fontSize:'20px', color:'#ffd86a' }).setOrigin(1,0);
 
       this.physics.world.setBounds(0,0,width,height);
 
-      // Basket
-      this.basket = this.add.rectangle(width/2, height-40, 100, 18, 0xffd86a).setStrokeStyle(2,0xffffff);
+      this.basket = this.add.rectangle(width/2, height-50, 120, 20, 0xffd86a).setStrokeStyle(2,0xffffff);
       this.physics.add.existing(this.basket, true);
 
-      // Coins
       this.coins = this.physics.add.group();
-      this.physics.add.overlap(this.basket, this.coins, (_, coin)=> { this.score++; this.scoreText.setText('Score: '+this.score); coin.destroy(); });
+      this.physics.add.overlap(this.basket, this.coins, (_, coin)=>{
+        this.score++; this.scoreText.setText('Score: '+this.score); coin.destroy();
+        if(!this.rewarded && this.score >= SETTINGS.rewardThreshold.catch){
+          this.rewarded = true;
+          toast(this, '🎉 Reward unlocked!');
+          document.getElementById('claim').classList.add('pulse');
+        }
+      });
 
-      this.time.addEvent({ delay: 650, loop:true, callback: () => {
-        const x = Phaser.Math.Between(20, width-20);
-        const c = this.add.circle(x, -20, 10, 0x8a5dff);
-        this.physics.add.existing(c);
-        c.body.setVelocity(0, Phaser.Math.Between(140, 230));
-        c.body.setCircle(10);
-        this.coins.add(c);
+      // Bigger, faster, more frequent coins so you can see them
+      this.time.addEvent({ delay: 520, loop:true, callback: ()=>{
+        const x = Phaser.Math.Between(24, width-24);
+        const r = Phaser.Math.Between(12, 18);
+        const coin = this.add.circle(x, -20, r, 0x56d0ff).setDepth(1);
+        this.physics.add.existing(coin);
+        coin.body.setVelocity(0, Phaser.Math.Between(180, 260));
+        coin.body.setCircle(r);
+        this.coins.add(coin);
       }});
 
-      // Pointer control
-      this.input.on('pointermove', p=> {
-        this.basket.x = Phaser.Math.Clamp(p.x, 50, width-50);
+      this.input.on('pointermove', p=>{
+        this.basket.x = Phaser.Math.Clamp(p.x, 60, width-60);
         this.basket.body.updateFromGameObject();
       });
 
-      // Timer
-      this.time.addEvent({ delay: 1000, loop:true, callback: () => {
+      this.time.addEvent({ delay:1000, loop:true, callback: ()=>{
         this.timeLeft--; this.timerText.setText(this.timeLeft+'s');
         if(this.timeLeft<=0) this.endGame();
       }});
@@ -152,92 +218,136 @@
     }
     endGame(){
       this.scene.pause();
+      saveScore('catch', this.score);
       const { width, height } = this.scale;
-      const box = this.add.rectangle(width/2, height/2, width*0.8, 170, 0x000000, 0.7);
-      const txt = this.add.text(width/2, height/2, `Time!\nScore: ${this.score}\nClick to return`, { fontSize:'22px', color:'#fff', align:'center' }).setOrigin(0.5);
-      [box, txt].forEach(el => el.setInteractive({ useHandCursor:true }).on('pointerdown', ()=> this.returnToMenu()));
+      const msg = `Time!\nScore: ${this.score}\nClick to return`;
+      const box = this.add.rectangle(width/2, height/2, width*0.84, 170, 0x000000, 0.7);
+      const txt = this.add.text(width/2, height/2, msg, { fontSize:'22px', color:'#fff', align:'center' }).setOrigin(0.5);
+      ;[box, txt].forEach(el=>el.setInteractive({useHandCursor:true}).on('pointerdown', ()=> this.returnToMenu()));
     }
     returnToMenu(){ this.scene.stop(); showMenu(); }
   }
 
-  // --------- Clicker (tap targets) ----------
-  class ClickerScene extends Phaser.Scene {
-    constructor(){ super('clicker'); this.score=0; this.timeLeft=20; }
+  class WheelScene extends Phaser.Scene {
+    constructor(){ super('wheel'); this.spinning=false; }
     create(){
       const { width, height } = this.scale;
       this.cameras.main.setBackgroundColor('#0a0718');
-      this.add.text(width/2, 30, '👆 Clicker', { fontSize:'24px', color:'#fff' }).setOrigin(0.5);
-      this.scoreText = this.add.text(20, 20, 'Score: 0', { fontSize:'20px', color:'#8EFF98' });
-      this.timerText = this.add.text(width-20, 20, this.timeLeft+'s', { fontSize:'20px', color:'#ffd86a' }).setOrigin(1,0);
+      this.add.text(width/2, 28, '🎡 Spin (3/day)', { fontSize:'24px', color:'#fff' }).setOrigin(0.5);
+      this.limitText = this.add.text(width/2, 56, '', { fontSize:'16px', color:'#a9b7d8' }).setOrigin(0.5);
+      this.updateLimitText();
 
-      // Target spawner
-      const spawn = () => {
-        const r = Phaser.Math.Between(18, 36);
-        const x = Phaser.Math.Between(r+10, width-r-10);
-        const y = Phaser.Math.Between(80, height-r-10);
-        const t = this.add.circle(x, y, r, 0x56d0ff).setInteractive({ useHandCursor:true });
-        t.on('pointerdown', () => {
-          this.score++; this.scoreText.setText('Score: '+this.score);
-          this.tweens.add({ targets:t, scale:0, duration:140, onComplete:()=> t.destroy() });
-          toast(this, '+1');
-        });
-        // remove after 1.5s if not clicked
-        this.time.delayedCall(1500, ()=> t.destroy());
-      };
-      this.time.addEvent({ delay: 500, loop:true, callback: spawn });
+      const radius = Math.min(width,height)*0.28;
+      const prizes = ['+10','+20','+30','+50','Try again','x2','+15','Jackpot'];
+      const seg = (Math.PI*2)/prizes.length;
 
-      // Timer
-      this.time.addEvent({ delay: 1000, loop:true, callback: () => {
-        this.timeLeft--; this.timerText.setText(this.timeLeft+'s');
-        if(this.timeLeft<=0) this.endGame();
-      }});
+      const g = this.add.graphics({ x: width/2, y: height/2 });
+      for(let i=0;i<prizes.length;i++){
+        g.fillStyle(i%2?0x8a5dff:0x56d0ff,1);
+        g.slice(0,0,radius, i*seg, (i+1)*seg, false).fillPath();
+      }
+      g.lineStyle(6,0xffffff).strokeCircle(0,0,radius);
+      const key = g.generateTexture('wheel', radius*2+10, radius*2+10).key;
+      g.destroy();
+
+      this.wheel = this.add.image(width/2, height/2, key).setInteractive({useHandCursor:true});
+      this.wheel.on('pointerdown', ()=> this.trySpin(prizes));
+
+      prizes.forEach((p,i)=>{
+        const angle = i*seg + seg/2 - Math.PI/2;
+        const x = width/2 + Math.cos(angle)*(radius*0.65);
+        const y = height/2 + Math.sin(angle)*(radius*0.65);
+        this.add.text(x,y,p,{fontSize:'18px', color:'#0a0718'}).setOrigin(0.5);
+      });
+      this.add.triangle(width/2, height/2 - radius - 18, 0,18, 18,18, 9,0, 0xffd86a).setStrokeStyle(2,0xffffff);
 
       this.input.keyboard.on('keydown-ESC', () => this.returnToMenu());
     }
-    endGame(){
-      this.scene.pause();
-      const { width, height } = this.scale;
-      const box = this.add.rectangle(width/2, height/2, width*0.8, 170, 0x000000, 0.7);
-      const txt = this.add.text(width/2, height/2, `Time!\nScore: ${this.score}\nClick to return`, { fontSize:'22px', color:'#fff', align:'center' }).setOrigin(0.5);
-      [box, txt].forEach(el => el.setInteractive({ useHandCursor:true }).on('pointerdown', ()=> this.returnToMenu()));
+    updateLimitText(){
+      const left = Math.max(0, SETTINGS.wheelDailyLimit - getSpinCount());
+      this.limitText?.setText(`Spins left today: ${left}/${SETTINGS.wheelDailyLimit}`);
+    }
+    trySpin(prizes){
+      if(this.spinning) return;
+      const used = getSpinCount();
+      if(used >= SETTINGS.wheelDailyLimit){
+        toast(this, 'Limit reached. Come back tomorrow!');
+        return;
+      }
+      this.spinning = true;
+      const seg = 360/prizes.length;
+      const target = Phaser.Math.Between(0, prizes.length-1);
+      const angle = 360*4 + (target*seg) + seg/2;
+      this.tweens.add({
+        targets:this.wheel, angle, duration:3200, ease:'Cubic.easeOut',
+        onComplete:()=>{
+          this.spinning=false;
+          incSpinCount(); this.updateLimitText();
+          const prize = prizes[target];
+          toast(this, `You got: ${prize}`);
+          // tiny score for wheel to appear in LB (optional)
+          saveScore('wheel', ['+10','+15','+20','+30','+50','x2','Jackpot'].indexOf(prize)+1);
+        }
+      });
     }
     returnToMenu(){ this.scene.stop(); showMenu(); }
   }
 
-  // --------- Boot Phaser + Menu handling ----------
+  // ================== Boot & UI wiring ==================
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     backgroundColor: '#090a16',
-    parent: document.body,
     scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH, width: W(), height: H() },
     physics: { default: 'arcade', arcade: { debug:false } },
-    scene: [DodgeScene, CatchScene, ClickerScene]
+    scene: [DodgeScene, CatchScene, WheelScene]
   });
 
-  function start(mode){
-    hideMenu();
-    game.scene.start(mode);
-  }
+  function start(mode){ hideMenu(); game.scene.start(mode); }
 
   // Menu buttons
+  const menu = document.getElementById('menu');
+  function showMenu(){ menu.style.display='grid'; }
+  function hideMenu(){ menu.style.display='none'; }
+  showMenu();
   document.querySelectorAll('#menu [data-mode]').forEach(btn=>{
     btn.addEventListener('click', () => start(btn.dataset.mode));
   });
 
-  function showMenu(){ document.getElementById('menu').style.display = 'grid'; }
-  function hideMenu(){ document.getElementById('menu').style.display = 'none'; }
-
-  // Claim reward (demo)
+  // Claim reward (manual)
   document.getElementById('claim').addEventListener('click', () => {
     const active = game.scene.getScenes(true)[0];
-    if(active){ toast(active, 'Reward claimed!'); }
+    if(active) toast(active, 'Reward claimed!');
   });
 
-  // Resize handling
-  window.addEventListener('resize', () => {
-    const s = game.scale;
-    s.resize(W(), H());
+  // Resize
+  addEventListener('resize', () => game.scale.resize(W(), H()));
+
+  // ================== Leaderboard overlay ==================
+  const lbOverlay = document.getElementById('leaderboardOverlay');
+  const lbTables = document.getElementById('lbTables');
+  document.getElementById('openLeaderboard').onclick = () => { renderLB('all'); lbOverlay.style.display='grid'; };
+  document.getElementById('closeLB').onclick = () => { lbOverlay.style.display='none'; };
+  document.getElementById('clearLB').onclick = () => {
+    ['dodge','catch','wheel'].forEach(g=>localStorage.removeItem(`lb_${g}`));
+    renderLB('all');
+  };
+  document.querySelectorAll('#lbTabs [data-lb]').forEach(b=>{
+    b.onclick = () => renderLB(b.dataset.lb);
   });
+
+  function renderLB(which){
+    const games = which==='all' ? ['dodge','catch','wheel'] : [which];
+    lbTables.innerHTML = games.map(g=>{
+      const rows = getScores(g);
+      const body = rows.length ? rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.score}</td><td class="muted">${new Date(r.ts).toLocaleString()}</td></tr>`).join('') : `<tr><td colspan="3" class="muted">No scores yet</td></tr>`;
+      return `
+        <h3 style="margin:14px 0 6px">${g.toUpperCase()}</h3>
+        <table>
+          <thead><tr><th>#</th><th>Score</th><th>When</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>`;
+    }).join('');
+  }
   </script>
 </body>
 </html>
