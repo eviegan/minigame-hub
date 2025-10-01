@@ -11,7 +11,14 @@
   canvas{display:block;width:100%;height:100%}
 
   /* overlays & UI */
-  #menu,#leaderboardOverlay,#starter{position:fixed;inset:0;display:none;place-items:center;z-index:6;background:linear-gradient(180deg,#0a0718 0%, #090a16 100%)}
+  #menu{
+    position:fixed;inset:0;display:grid;place-items:center;z-index:6;
+    background:linear-gradient(180deg,#0a0718 0%, #090a16 100%);
+  }
+  #leaderboardOverlay,#starter{
+    position:fixed;inset:0;display:none;place-items:center;z-index:6;
+    background:linear-gradient(180deg,#0a0718 0%, #090a16 100%);
+  }
   .card{width:min(560px,92%);background:#0f1226;border:1px solid #243;border-radius:16px;padding:20px;box-shadow:0 20px 60px #0007;text-align:center}
   .grid{display:grid;gap:12px;margin-top:14px}
   .primary{background:#8a5dff;color:#0a0718;font-weight:800;border:0;padding:12px 16px;border-radius:14px;cursor:pointer;font-size:18px}
@@ -26,7 +33,7 @@
   #backGameBtn{position:fixed;left:12px;top:12px;z-index:7;background:#1b2040;color:#cfe1ff;border:1px solid #2b325d;
     padding:8px 12px;border-radius:10px;font-weight:700;cursor:pointer;display:none}
 
-  /* Tilt toggle (also shown in-game for Catch) */
+  /* Tilt toggle (only for Catch) */
   #tiltBtn{position:fixed;right:12px;top:12px;z-index:7;background:#1b2040;color:#cfe1ff;border:1px solid #2b325d;
     padding:8px 12px;border-radius:10px;font-weight:700;cursor:pointer;display:none}
 
@@ -45,7 +52,16 @@
 <body>
   <canvas id="stage"></canvas>
 
-  <!-- small HUD -->
+  <noscript>
+    <div style="position:fixed;inset:0;display:grid;place-items:center;background:#090a16;color:#fff;z-index:9999">
+      <div style="text-align:center">
+        <h2>Mini Game Hub</h2>
+        <p>Please enable JavaScript to play.</p>
+      </div>
+    </div>
+  </noscript>
+
+  <!-- HUD -->
   <div id="hud"><button id="claim">Claim reward</button></div>
   <div id="combo" class="chip">Combo ×2</div>
   <div id="mult"  class="chip">×2 active</div>
@@ -175,7 +191,7 @@ function saveScore(game,value){
 const getScores=(g)=>{try{return JSON.parse(localStorage.getItem(`lb_${g}`)||"[]")}catch(e){return[]}};
 const getBest  =(g)=>+localStorage.getItem(`best_${g}`)||0;
 
-/* -------- engine with screen shake (used in Catch) -------- */
+/* -------- engine with optional screen shake (used in Catch effects) -------- */
 const Engine=(()=>{let raf=0,running=false,last=0,update=null,draw=null,cleanup=null,pointer=null;
   let shakeT=0,shakeAmp=0;
   function loop(ts){
@@ -303,6 +319,7 @@ function disableTiltListeners(){
   tiltAvailable=false; tilt.raw=0; tilt.smooth=0;
 }
 async function tryEnableTiltFromStarter(){
+  if(!haveMotionAPIs()){ toast('Tilt not supported on this device'); tiltChk.checked=false; return; }
   const ok=await requestMotionPermissionIfNeeded();
   if(!ok){ toast('Motion permission denied'); tiltChk.checked=false; return; }
   enableTiltListeners(); tiltEnabled=true; tiltBtn.textContent='Tilt: On'; tiltChk.checked=true;
@@ -313,7 +330,7 @@ async function toggleTilt(){
   else{ tiltEnabled=false; tiltBtn.textContent='Tilt: Off'; tiltChk.checked=false; disableTiltListeners(); }
 }
 tiltBtn.onclick = toggleTilt;
-tiltEnableBtn.onclick = tryEnableTiltFromStarter;
+tiltEnableBtn && (tiltEnableBtn.onclick = tryEnableTiltFromStarter);
 
 /* Game */
 function playCatch(){
@@ -334,9 +351,9 @@ function playCatch(){
   function endGame(){ Engine.stop(); clearTimeout(s.comboTO); hideCombo(); hideMult(); saveScore('catch',s.score); toast(`Time! Score: ${s.score}`); showMenu(); }
 
   function update(dt){
-    // Tilt movement (smoother & a bit faster)
+    // Tilt movement (smooth + responsive)
     if(tiltEnabled){
-      const SMOOTH=0.25, SPEED=520*DPR();   // tuned for smooth-but-responsive
+      const SMOOTH=0.25, SPEED=520*DPR();
       tilt.smooth += (tilt.raw - tilt.smooth)*SMOOTH;
       s.basketX += tilt.smooth * SPEED * dt;
       s.basketX = clamp(s.basketX, 90*DPR(), W()-90*DPR());
@@ -395,7 +412,7 @@ function playCatch(){
       ctx.font=`${52*DPR()}px "Apple Color Emoji","Segoe UI Emoji",system-ui`;
       ctx.fillText(emoji,it.x,it.y);
     }
-    // basket (auto smaller on mobile)
+    // basket
     const bh=26*DPR();
     ctx.fillStyle='#ffd86a'; ctx.strokeStyle='#fff'; ctx.lineWidth=2*DPR();
     roundRect(ctx, s.basketX-basketW/2, ground-bh/2, basketW, bh, 6*DPR(), true, true);
@@ -435,7 +452,7 @@ function showMenu(){
   hideCombo(); hideMult();
   menu.style.display='grid'; starter.style.display='none'; backGameBtn.style.display='none';
   tiltBtn.style.display='none';
-  if(tiltEnabled){ tiltEnabled=false; tiltBtn.textContent='Tilt: Off'; tiltChk.checked=false; }
+  if(tiltEnabled){ tiltEnabled=false; tiltBtn.textContent='Tilt: Off'; tiltChk && (tiltChk.checked=false); }
   disableTiltListeners();
 }
 function hideMenu(){ menu.style.display='none'; }
@@ -448,9 +465,8 @@ function openStarter(mode){
   startHint.textContent  = mode==='mole'
     ? 'Tap animals to score. Avoid bombs!'
     : 'Move basket to catch 🪙; avoid 🧨; grab ✨ for ×2! You can enable phone tilt below.';
-  // show tilt pre-enable row only for Catch and when sensors exist
   document.getElementById('tiltRow').style.display = (mode==='catch' && haveMotionAPIs()) ? 'flex' : 'none';
-  cd.style.display='none';
+  cd.style.display='none'; starter.style.display='grid';
 }
 function startScene(mode){
   stopAllScenes();
@@ -467,15 +483,13 @@ function startScene(mode){
 
 startBtn.onclick=async()=>{ 
   Sound.click(); cd.style.display='block'; let n=3; cd.textContent=n;
-  // if user checked tilt but not enabled yet, try enabling now (works for iPhone)
-  if (tiltChk.checked && !tiltEnabled) await tryEnableTiltFromStarter();
+  if (tiltChk && tiltChk.checked && !tiltEnabled) await tryEnableTiltFromStarter();
   const tick=()=>{ n--; if(n>0){ cd.textContent=n; setTimeout(tick,700); } else { starter.style.display='none'; startScene(pendingMode); } };
   setTimeout(tick,700);
 };
 backBtn.onclick=()=>{ Sound.click(); starter.style.display='none'; showMenu(); };
 document.querySelectorAll('#menu [data-mode]').forEach(b=>b.addEventListener('click',()=>{ hideMenu(); openStarter(b.dataset.mode); }));
 backGameBtn.onclick=()=>{ Sound.click(); stopAllScenes(); showMenu(); };
-
 addEventListener('keydown',e=>{ if(e.key==='Escape'){ stopAllScenes(); showMenu(); }});
 
 /* leaderboard overlay */
@@ -497,10 +511,21 @@ function renderLB(which){
 /* claim */
 document.getElementById('claim').onclick=()=>toast('Reward claimed!');
 
-/* boot */
+/* -------- robust boot -------- */
 function layout(){ W(); H(); }
-addEventListener('resize',layout,{passive:true});
-layout(); showMenu();
+window.addEventListener('resize', layout, { passive:true });
+
+window.addEventListener('DOMContentLoaded', () => {
+  try {
+    layout();
+    showMenu();  // force menu visible on boot
+  } catch (e) {
+    // if anything goes wrong, still show the menu and show error badge
+    document.getElementById('menu').style.display = 'grid';
+    const badge = document.getElementById('errBadge');
+    if (badge) { badge.textContent = e.message || String(e); badge.style.display = 'block'; }
+  }
+});
 </script>
 </body>
 </html>
