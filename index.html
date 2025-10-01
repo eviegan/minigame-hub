@@ -30,7 +30,6 @@
   #errBadge{position:fixed;right:12px;top:12px;background:#4b1010;border:1px solid #7d1b1b;border-radius:10px;padding:8px 12px;display:none;z-index:9}
 </style>
 
-<!-- Phaser -->
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
@@ -87,7 +86,7 @@
   </div>
 
 <script>
-/* ================= error badge (shows first JS error) ================= */
+/* ============== error badge for first JS error ============== */
 (function(){
   const badge=document.getElementById('errBadge');
   const show=(msg)=>{badge.textContent=msg;badge.style.display='block'};
@@ -95,7 +94,7 @@
   addEventListener('unhandledrejection',e=>show(String(e.reason)));
 })();
 
-/* ================= tiny sound engine ================= */
+/* ============== tiny sound engine ============== */
 const Sound=(()=>{const c=new (window.AudioContext||window.webkitAudioContext)();
   const resume=()=>c.state==='suspended'&&c.resume(); addEventListener('pointerdown',resume,{once:true});
   const tone=(f,d=0.12,t='sine',v=.18)=>{const o=c.createOscillator(),g=c.createGain();o.type=t;o.frequency.value=f;o.connect(g);g.connect(c.destination);
@@ -105,10 +104,10 @@ const Sound=(()=>{const c=new (window.AudioContext||window.webkitAudioContext)()
   return {pop:()=>tone(1200,.08,'triangle',.16),click:()=>tone(880,.05,'square',.1),
           ding:()=>[660,990,1320].forEach((f,i)=>tone(f,.12-.02*i,'sine',.16)),boom:()=>{noise(.22,.35);tone(90,.2,'sine',.12)}}})();
 
-/* ================= helpers & settings ================= */
+/* ============== helpers & settings ============== */
 const W=()=>innerWidth,H=()=>innerHeight;
 const SETTINGS={ rewardThreshold:{mole:14,catch:16}, mole:{duration:25,gridSmall:3,gridLarge:4,popEvery:620,upTime:780}, wheelDailyLimit:3 };
-const todayKey=()=>new Date().toISOString().slice(0,10);
+
 const comboChip=document.getElementById('combo'), multChip=document.getElementById('mult');
 const showCombo=(m)=>{comboChip.textContent=`Combo ×${m}`;comboChip.style.display='block'};
 const hideCombo=()=>comboChip.style.display='none';
@@ -120,14 +119,13 @@ function toast(scene,msg){const t=scene.add.text(scene.scale.width/2,scene.scale
 function saveScore(game,val){try{const k=`lb_${game}`;const L=JSON.parse(localStorage.getItem(k)||"[]");L.push({score:val,ts:Date.now()});L.sort((a,b)=>b.score-a.score);
   localStorage.setItem(k,JSON.stringify(L.slice(0,5)));const bk=`best_${game}`;const best=Math.max(val,+(localStorage.getItem(bk)||0));localStorage.setItem(bk,best)}catch{}}
 const getScores=(g)=>{try{return JSON.parse(localStorage.getItem(`lb_${g}`)||"[]")}catch{return[]}}, getBest=(g)=>+localStorage.getItem(`best_${g}`)||0;
-const incSpin=()=>localStorage.setItem(`wheel_${todayKey()}`,((+localStorage.getItem(`wheel_${todayKey()}`)||0)+1)+''), spins=()=>+localStorage.getItem(`wheel_${todayKey()}`)||0;
 
 function makeRectTexture(s,k,w,h,f,st=0xffffff){
   if(s.textures.exists(k))return;
   const g=s.add.graphics();g.fillStyle(f,1).fillRoundedRect(0,0,w,h,6);g.lineStyle(2,st,1).strokeRoundedRect(0,0,w,h,6);
   g.generateTexture(k,w,h);g.destroy();
 }
-function makeEmojiTexture(s,k,emoji,size=48){   /* ✅ fixed: use addCanvas */
+function makeEmojiTexture(s,k,emoji,size=48){ /* ✅ correct API */
   if(s.textures.exists(k))return;
   const c=document.createElement('canvas');c.width=c.height=size;
   const x=c.getContext('2d');x.textAlign='center';x.textBaseline='middle';
@@ -136,7 +134,7 @@ function makeEmojiTexture(s,k,emoji,size=48){   /* ✅ fixed: use addCanvas */
   s.textures.addCanvas(k,c);
 }
 
-/* ================== Scenes ================== */
+/* ============== Scenes ============== */
 class MoleScene extends Phaser.Scene{
   constructor(){super('mole');this.score=0;this.tl=SETTINGS.mole.duration;this.holes=[];this.combo=0;this.ct=null}
   create(){
@@ -267,19 +265,21 @@ class WheelScene extends Phaser.Scene{
     this.add.triangle(w/2,h/2-R-18,0,18,18,18,9,0,0xffd86a).setStrokeStyle(2,0xffffff);
     this.input.keyboard.on('keydown-ESC',()=>this.menu());
   }
-  u(){ const left=Math.max(0,SETTINGS.wheelDailyLimit-spins()); this.lim?.setText(`Spins left today: ${left}/${SETTINGS.wheelDailyLimit}`); }
-  spin(P){ if(this.spinning)return; const used=spins(); if(used>=SETTINGS.wheelDailyLimit){ toast(this,'Limit reached. Come back tomorrow!'); return; }
+  u(){ const left=Math.max(0,SETTINGS.wheelDailyLimit-(+localStorage.getItem('wheel_'+new Date().toISOString().slice(0,10))||0));
+        this.lim?.setText(`Spins left today: ${left}/${SETTINGS.wheelDailyLimit}`); }
+  spin(P){ const k='wheel_'+new Date().toISOString().slice(0,10);
+    const used=(+localStorage.getItem(k)||0); if(this.spinning||used>=SETTINGS.wheelDailyLimit){ toast(this,'Limit reached. Come back tomorrow!'); return; }
     this.spinning=true; Sound.click();
     const seg=360/P.length, t=Phaser.Math.Between(0,P.length-1), angle=360*4+(t*seg)+seg/2;
     this.tweens.add({targets:this.wheel,angle,duration:3200,ease:'Cubic.easeOut',onComplete:()=>{
-      this.spinning=false; incSpin(); this.u(); const prize=P[t]; toast(this,`You got: ${prize}`); Sound.ding();
+      this.spinning=false; localStorage.setItem(k,used+1); this.u(); const prize=P[t]; toast(this,`You got: ${prize}`); Sound.ding();
       saveScore('wheel',['+10','+15','+20','+30','+50','x2','Jackpot'].indexOf(prize)+1);
     }});
   }
   menu(){ this.scene.stop(); showMenu(); }
 }
 
-/* ================= boot & UI ================= */
+/* ============== boot & UI ============== */
 const game=new Phaser.Game({
   type:Phaser.AUTO, backgroundColor:'#090a16',
   scale:{mode:Phaser.Scale.RESIZE,autoCenter:Phaser.Scale.CENTER_BOTH,width:W(),height:H()},
@@ -315,12 +315,11 @@ startBtn.onclick=()=>{ Sound.click(); cd.style.display='block'; let n=3; cd.text
   const tick=()=>{ n--; if(n>0){ cd.textContent=n; setTimeout(tick,700); } else { starter.style.display='none'; startScene(pending); } };
   setTimeout(tick,700);
 };
-backBtn.onclick=()=>{ Sound.click(); starter.style.display='none'; showMenu(); };
+backBtn.onclick = ()=>{ Sound.click(); starter.style.display='none'; showMenu(); };
 document.querySelectorAll('#menu [data-mode]').forEach(b=>b.addEventListener('click',()=>{ hideMenu(); openStarter(b.dataset.mode); }));
 backGameBtn.onclick=()=>{ Sound.click(); stopAll(); showMenu(); };
 
 document.getElementById('claim').onclick=()=>{ const s=game.scene.getScenes(true)[0]; if(s) toast(s,'Reward claimed!'); };
-addEventListener('resize',()=>game.scale.resize(W(),H()));
 
 /* leaderboard overlay */
 const lb=document.getElementById('leaderboardOverlay'), lbTables=document.getElementById('lbTables');
