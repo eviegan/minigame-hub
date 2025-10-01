@@ -14,6 +14,7 @@
   .grid{display:grid;gap:12px;margin-top:14px}
   .primary{background:#8a5dff;color:#0a0718;font-weight:800;border:0;padding:12px 16px;border-radius:14px;cursor:pointer;font-size:18px}
   .ghost{background:#1b2040;color:#cfe1ff;border:1px solid #2b325d;padding:10px 14px;border-radius:10px;cursor:pointer;font-size:16px}
+
   #hud{position:fixed;right:12px;bottom:12px;background:#0008;backdrop-filter:blur(8px);padding:8px 12px;border-radius:12px;z-index:5}
   #hud button{border:0;border-radius:12px;padding:8px 12px;font-weight:700;cursor:pointer}
 
@@ -24,12 +25,13 @@
   .comboChip{position:fixed;left:50%;top:68px;transform:translateX(-50%);background:#1b2040;border:1px solid #2b325d;border-radius:999px;padding:6px 12px;font-weight:800;display:none;z-index:7;pointer-events:none}
   .multBadge{position:fixed;left:50%;top:104px;transform:translateX(-50%);background:#20351a;border:1px solid #2b5d33;border-radius:999px;padding:6px 12px;font-weight:800;display:none;z-index:7;pointer-events:none}
 
-  /* in-game back button */
   #backGameBtn{position:fixed;left:12px;top:12px;z-index:7;background:#1b2040;color:#cfe1ff;border:1px solid #2b325d;
     padding:8px 12px;border-radius:10px;font-weight:700;cursor:pointer;display:none}
   #errBadge{position:fixed;right:12px;top:12px;background:#4b1010;border:1px solid #7d1b1b;border-radius:10px;padding:8px 12px;display:none;z-index:9}
 </style>
-<script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
+
+<!-- Phaser -->
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
   <div id="hud"><button id="claim">Claim reward</button></div>
@@ -85,15 +87,15 @@
   </div>
 
 <script>
-/* ====== tiny error badge so you see issues immediately ====== */
+/* ================= error badge (shows first JS error) ================= */
 (function(){
   const badge=document.getElementById('errBadge');
-  const show=(msg)=>{ badge.textContent=msg; badge.style.display='block'; };
-  window.addEventListener('error',e=>show(e.message));
-  window.addEventListener('unhandledrejection',e=>show(String(e.reason)));
+  const show=(msg)=>{badge.textContent=msg;badge.style.display='block'};
+  addEventListener('error',e=>show(e.message));
+  addEventListener('unhandledrejection',e=>show(String(e.reason)));
 })();
 
-/* ====== sounds ====== */
+/* ================= tiny sound engine ================= */
 const Sound=(()=>{const c=new (window.AudioContext||window.webkitAudioContext)();
   const resume=()=>c.state==='suspended'&&c.resume(); addEventListener('pointerdown',resume,{once:true});
   const tone=(f,d=0.12,t='sine',v=.18)=>{const o=c.createOscillator(),g=c.createGain();o.type=t;o.frequency.value=f;o.connect(g);g.connect(c.destination);
@@ -103,7 +105,7 @@ const Sound=(()=>{const c=new (window.AudioContext||window.webkitAudioContext)()
   return {pop:()=>tone(1200,.08,'triangle',.16),click:()=>tone(880,.05,'square',.1),
           ding:()=>[660,990,1320].forEach((f,i)=>tone(f,.12-.02*i,'sine',.16)),boom:()=>{noise(.22,.35);tone(90,.2,'sine',.12)}}})();
 
-/* ====== helpers & settings ====== */
+/* ================= helpers & settings ================= */
 const W=()=>innerWidth,H=()=>innerHeight;
 const SETTINGS={ rewardThreshold:{mole:14,catch:16}, mole:{duration:25,gridSmall:3,gridLarge:4,popEvery:620,upTime:780}, wheelDailyLimit:3 };
 const todayKey=()=>new Date().toISOString().slice(0,10);
@@ -119,95 +121,200 @@ function saveScore(game,val){try{const k=`lb_${game}`;const L=JSON.parse(localSt
   localStorage.setItem(k,JSON.stringify(L.slice(0,5)));const bk=`best_${game}`;const best=Math.max(val,+(localStorage.getItem(bk)||0));localStorage.setItem(bk,best)}catch{}}
 const getScores=(g)=>{try{return JSON.parse(localStorage.getItem(`lb_${g}`)||"[]")}catch{return[]}}, getBest=(g)=>+localStorage.getItem(`best_${g}`)||0;
 const incSpin=()=>localStorage.setItem(`wheel_${todayKey()}`,((+localStorage.getItem(`wheel_${todayKey()}`)||0)+1)+''), spins=()=>+localStorage.getItem(`wheel_${todayKey()}`)||0;
-function makeRectTexture(s,k,w,h,f,st=0xffffff){if(s.textures.exists(k))return;const g=s.add.graphics();g.fillStyle(f,1).fillRoundedRect(0,0,w,h,6);g.lineStyle(2,st,1).strokeRoundedRect(0,0,w,h,6);g.generateTexture(k,w,h);g.destroy()}
-function makeEmojiTexture(s,k,e,sz=48){if(s.textures.exists(k))return;const c=document.createElement('canvas');c.width=c.height=sz;const x=c.getContext('2d');x.textAlign='center';x.textBaseline='middle';x.font=`${Math.floor(sz*.9)}px "Apple Color Emoji","Segoe UI Emoji",sans-serif`;x.fillText(e,sz/2,sz/2);s.textures.addImage(k,c)}
 
-/* ====== scenes ====== */
+function makeRectTexture(s,k,w,h,f,st=0xffffff){
+  if(s.textures.exists(k))return;
+  const g=s.add.graphics();g.fillStyle(f,1).fillRoundedRect(0,0,w,h,6);g.lineStyle(2,st,1).strokeRoundedRect(0,0,w,h,6);
+  g.generateTexture(k,w,h);g.destroy();
+}
+function makeEmojiTexture(s,k,emoji,size=48){   /* ✅ fixed: use addCanvas */
+  if(s.textures.exists(k))return;
+  const c=document.createElement('canvas');c.width=c.height=size;
+  const x=c.getContext('2d');x.textAlign='center';x.textBaseline='middle';
+  x.font=`${Math.floor(size*.9)}px "Apple Color Emoji","Segoe UI Emoji",sans-serif`;
+  x.fillText(emoji,size/2,size/2);
+  s.textures.addCanvas(k,c);
+}
+
+/* ================== Scenes ================== */
 class MoleScene extends Phaser.Scene{
   constructor(){super('mole');this.score=0;this.tl=SETTINGS.mole.duration;this.holes=[];this.combo=0;this.ct=null}
   create(){
     const {width:w,height:h}=this.scale; this.cameras.main.setBackgroundColor('#0a0718');
     this.add.text(w/2,28,'🎯 Whack-a-Mole',{fontSize:'24px',color:'#fff'}).setOrigin(.5);
-    this.sc=this.add.text(20,16,'Score: 0',{fontSize:'20px',color:'#8EFF98'}); this.tm=this.add.text(w-20,16,this.tl+'s',{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
+    this.sc=this.add.text(20,16,'0',{fontSize:'20px',color:'#8EFF98'}); this.tm=this.add.text(w-20,16,this.tl+'s',{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
+
     ['emoji_hamster','emoji_cat','emoji_dog','emoji_rabbit'].forEach((k,i)=>makeEmojiTexture(this,k,['🐹','🐱','🐶','🐰'][i],64));
     makeEmojiTexture(this,'emoji_bomb','💣',64); makeRectTexture(this,'holePlate',96,28,0x1b2040,0x2b325d);
-    const cols=(Math.min(w,h)<720)?SETTINGS.mole.gridSmall:SETTINGS.mole.gridLarge, rows=cols, gridW=Math.min(w*.9,h*.78), cell=gridW/cols, sx=w/2-gridW/2+cell/2, sy=h*.2+cell/2;
+
+    const cols=(Math.min(w,h)<720)?SETTINGS.mole.gridSmall:SETTINGS.mole.gridLarge;
+    const rows=cols, gridW=Math.min(w*.9,h*.78), cell=gridW/cols, sx=w/2-gridW/2+cell/2, sy=h*.2+cell/2;
     const animals=['emoji_hamster','emoji_cat','emoji_dog','emoji_rabbit'];
-    for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){const x=sx+c*cell,y=sy+r*cell;const plate=this.add.image(x,y+20,'holePlate');
-      const face=this.add.image(x,y,'emoji_hamster').setVisible(false).setInteractive({useHandCursor:true});
-      face.on('pointerdown',()=>{if(!face.visible)return;if(face.getData('type')==='bomb'){this.cameras.main.shake(120,.003);Sound.boom();this.score=Math.max(0,this.score-2);this.resetCombo();hideCombo()}else{const m=this.bump();Sound.pop();this.score+=m;showCombo(m)}
-        this.sc.setText('Score: '+this.score);this.tweens.add({targets:face,y:face.y-12,duration:90,yoyo:true,onComplete:()=>face.setVisible(false)})});
-      this.holes.push({plate,face})}
-    this.pop=this.time.addEvent({delay:SETTINGS.mole.popEvery,loop:true,callback:()=>{const free=this.holes.filter(h=>!h.face.visible);if(!free.length)return;
-      const h=Phaser.Utils.Array.GetRandom(free);const bomb=Math.random()<.18;h.face.setTexture(bomb?'emoji_bomb':Phaser.Utils.Array.GetRandom(animals)).setData('type',bomb?'bomb':'animal');h.face.y=h.plate.y;h.face.setVisible(true);
-      this.tweens.add({targets:h.face,y:h.plate.y-28,duration:110});this.time.delayedCall(SETTINGS.mole.upTime,()=>{if(h.face.visible)this.tweens.add({targets:h.face,y:h.plate.y+24,duration:150,onComplete:()=>h.face.setVisible(false)})})}});
+
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        const x=sx+c*cell,y=sy+r*cell;
+        const plate=this.add.image(x,y+20,'holePlate');
+        const face=this.add.image(x,y,'emoji_hamster').setVisible(false).setInteractive({useHandCursor:true});
+        face.on('pointerdown',()=>{
+          if(!face.visible)return;
+          if(face.getData('type')==='bomb'){
+            this.cameras.main.shake(120,.003); Sound.boom();
+            this.score=Math.max(0,this.score-2); this.resetCombo(); hideCombo();
+          }else{
+            const m=this.bump(); Sound.pop(); this.score+=m; showCombo(m);
+          }
+          this.sc.setText(this.score);
+          this.tweens.add({targets:face,y:face.y-12,duration:90,yoyo:true,onComplete:()=>face.setVisible(false)});
+        });
+        this.holes.push({plate,face});
+      }
+    }
+
+    this.pop=this.time.addEvent({delay:SETTINGS.mole.popEvery,loop:true,callback:()=>{
+      const free=this.holes.filter(h=>!h.face.visible); if(!free.length)return;
+      const h=Phaser.Utils.Array.GetRandom(free);
+      const bomb=Math.random()<.18, tex=bomb?'emoji_bomb':Phaser.Utils.Array.GetRandom(animals);
+      h.face.setTexture(tex).setData('type',bomb?'bomb':'animal'); h.face.y=h.plate.y; h.face.setVisible(true);
+      this.tweens.add({targets:h.face,y:h.plate.y-28,duration:110});
+      this.time.delayedCall(SETTINGS.mole.upTime,()=>{if(h.face.visible)this.tweens.add({targets:h.face,y:h.plate.y+24,duration:150,onComplete:()=>h.face.setVisible(false)})});
+    }});
+
     this.clock=this.time.addEvent({delay:1000,loop:true,callback:()=>{this.tl--;this.tm.setText(this.tl+'s');if(this.tl<=0)this.end()}});
-    this.input.keyboard.on('keydown-ESC',()=>this.menu())}
-  bump(){if(this.ct){this.combo=Math.min(this.combo+1,9)}else{this.combo=1}clearTimeout(this.ct);this.ct=setTimeout(()=>{this.combo=0;hideCombo()},1500);return this.combo>=5?3:this.combo>=3?2:1}
-  resetCombo(){this.combo=0;clearTimeout(this.ct);this.ct=null}
-  end(){this.pop?.remove();this.resetCombo();hideCombo();this.scene.pause();saveScore('mole',this.score);
-    const {width:w,height:h}=this.scale;const box=this.add.rectangle(w/2,h/2,w*.84,170,0x000000,.7);const t=this.add.text(w/2,h/2,`Time!\nScore: ${this.score}\nClick to return`,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
-    ;[box,t].forEach(e=>e.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.menu()))}
-  menu(){this.scene.stop();showMenu()}
+    this.input.keyboard.on('keydown-ESC',()=>this.menu());
+  }
+  bump(){ if(this.ct){this.combo=Math.min(this.combo+1,9)}else{this.combo=1}
+    clearTimeout(this.ct); this.ct=setTimeout(()=>{this.combo=0;hideCombo()},1500);
+    return this.combo>=5?3:this.combo>=3?2:1;
+  }
+  resetCombo(){ this.combo=0; clearTimeout(this.ct); this.ct=null; }
+  end(){ this.pop?.remove(); this.resetCombo(); hideCombo(); this.scene.pause(); saveScore('mole',this.score);
+    const {width:w,height:h}=this.scale; const box=this.add.rectangle(w/2,h/2,w*.84,170,0x000000,.7);
+    const t=this.add.text(w/2,h/2,`Time!\nScore: ${this.score}\nClick to return`,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
+    [box,t].forEach(e=>e.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.menu()));
+  }
+  menu(){ this.scene.stop(); showMenu(); }
 }
+
 class CatchScene extends Phaser.Scene{
   constructor(){super('catch');this.score=0;this.tl=25;this.combo=0;this.ct=null;this.mult=1;this.mt=null}
   create(){
-    const {width:w,height:h}=this.scale;this.cameras.main.setBackgroundColor('#0a0718');
+    const {width:w,height:h}=this.scale; this.cameras.main.setBackgroundColor('#0a0718');
     this.add.text(w/2,28,'🧺 Catch the Coins',{fontSize:'24px',color:'#fff'}).setOrigin(.5);
-    this.sc=this.add.text(20,16,'Score: 0',{fontSize:'20px',color:'#8EFF98'});this.tm=this.add.text(w-20,16,this.tl+'s',{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
-    makeEmojiTexture(this,'emoji_coin','🪙',52);makeEmojiTexture(this,'emoji_bombSmall','🧨',52);makeEmojiTexture(this,'emoji_star','✨',52);makeRectTexture(this,'basketRect',180,26,0xffd86a);
-    this.physics.world.setBounds(0,0,w,h);this.basket=this.physics.add.image(w/2,h-60,'basketRect').setImmovable(true);this.basket.body.allowGravity=false;
+    this.sc=this.add.text(20,16,'0',{fontSize:'20px',color:'#8EFF98'}); this.tm=this.add.text(w-20,16,this.tl+'s',{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
+
+    makeEmojiTexture(this,'emoji_coin','🪙',52);
+    makeEmojiTexture(this,'emoji_bombSmall','🧨',52);
+    makeEmojiTexture(this,'emoji_star','✨',52);
+    makeRectTexture(this,'basketRect',180,26,0xffd86a);
+
+    this.physics.world.setBounds(0,0,w,h);
+    this.basket=this.physics.add.image(w/2,h-60,'basketRect').setImmovable(true);
+    this.basket.body.allowGravity=false;
+
     this.items=this.physics.add.group({allowGravity:true,gravityY:750});
-    this.physics.add.overlap(this.basket,this.items,(_,it)=>{const t=it.getData('type');if(t==='coin'){const m=this.bump()*this.mult;Sound.pop();this.score+=m;showCombo(m)}
-      else if(t==='bomb'){Sound.boom();this.score=Math.max(0,this.score-3);this.cameras.main.shake(120,.003);this.reset();hideCombo()}
-      else {Sound.ding();this.boost(6)} this.sc.setText('Score: '+this.score);it.destroy()});
-    this.time.addEvent({delay:520,loop:true,callback:()=>this.drop()});this.events.on('update',()=>this.items.children.iterate(c=>{if(c&&c.y>h+60)c.destroy()}));
+    this.physics.add.overlap(this.basket,this.items,(_,it)=>{
+      const t=it.getData('type');
+      if(t==='coin'){ const m=this.bump()*this.mult; Sound.pop(); this.score+=m; showCombo(m); }
+      else if(t==='bomb'){ Sound.boom(); this.score=Math.max(0,this.score-3); this.cameras.main.shake(120,.003); this.reset(); hideCombo(); }
+      else { Sound.ding(); this.boost(6); }
+      this.sc.setText(this.score); it.destroy();
+    });
+
+    this.time.addEvent({delay:520,loop:true,callback:()=>this.drop()});
+    this.events.on('update',()=>this.items.children.iterate(c=>{if(c&&c.y>h+60)c.destroy()}));
     this.input.on('pointermove',p=>{this.basket.x=Phaser.Math.Clamp(p.x,90,w-90);this.basket.body.updateFromGameObject()});
     this.clock=this.time.addEvent({delay:1000,loop:true,callback:()=>{this.tl--;this.tm.setText(this.tl+'s');if(this.tl<=0)this.end()}});
-    this.input.keyboard.on('keydown-ESC',()=>this.menu())}
-  drop(){const w=this.scale.width,r=Math.random();let k='emoji_coin',t='coin';if(r<.14){k='emoji_bombSmall';t='bomb'}else if(r>.84){k='emoji_star';t='mult'}
-    const x=Phaser.Math.Between(40,w-40);const it=this.physics.add.image(x,-30,k).setData('type',t);it.setVelocity(0,120).setMaxVelocity(430,1100);this.items.add(it)}
-  boost(s){this.mult=2;let left=s;showMult(left);clearInterval(this.mt);this.mt=setInterval(()=>{left--;left>0?showMult(left):(clearInterval(this.mt),this.mult=1,hideMult())},1000)}
-  bump(){if(this.ct){this.combo=Math.min(this.combo+1,9)}else{this.combo=1}clearTimeout(this.ct);this.ct=setTimeout(()=>{this.combo=0;hideCombo()},1500);return this.combo>=5?3:this.combo>=3?2:1}
-  reset(){this.combo=0;clearTimeout(this.ct);this.ct=null}
-  end(){this.reset();hideCombo();hideMult();clearInterval(this.mt);this.mult=1;this.scene.pause();saveScore('catch',this.score);
-    const {width:w,height:h}=this.scale;const box=this.add.rectangle(w/2,h/2,w*.84,170,0x000000,.7);const t=this.add.text(w/2,h/2,`Time!\nScore: ${this.score}\nClick to return`,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
-    ;[box,t].forEach(e=>e.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.menu()))}
-  menu(){this.scene.stop();showMenu()}
+    this.input.keyboard.on('keydown-ESC',()=>this.menu());
+  }
+  drop(){ const w=this.scale.width, r=Math.random(); let k='emoji_coin', t='coin';
+    if(r<.14){k='emoji_bombSmall';t='bomb'} else if(r>.84){k='emoji_star';t='mult'}
+    const x=Phaser.Math.Between(40,w-40); const it=this.physics.add.image(x,-30,k).setData('type',t);
+    it.setVelocity(0,120).setMaxVelocity(430,1100); this.items.add(it);
+  }
+  boost(s){ this.mult=2; let left=s; showMult(left);
+    clearInterval(this.mt); this.mt=setInterval(()=>{left--; if(left>0) showMult(left); else {clearInterval(this.mt); this.mult=1; hideMult();}},1000);
+  }
+  bump(){ if(this.ct){this.combo=Math.min(this.combo+1,9)} else {this.combo=1}
+    clearTimeout(this.ct); this.ct=setTimeout(()=>{this.combo=0;hideCombo()},1500);
+    return this.combo>=5?3:this.combo>=3?2:1;
+  }
+  reset(){ this.combo=0; clearTimeout(this.ct); this.ct=null; }
+  end(){ this.reset(); hideCombo(); hideMult(); clearInterval(this.mt); this.mult=1; this.scene.pause(); saveScore('catch',this.score);
+    const {width:w,height:h}=this.scale; const box=this.add.rectangle(w/2,h/2,w*.84,170,0x000000,.7);
+    const t=this.add.text(w/2,h/2,`Time!\nScore: ${this.score}\nClick to return`,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
+    [box,t].forEach(e=>e.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.menu()));
+  }
+  menu(){ this.scene.stop(); showMenu(); }
 }
+
 class WheelScene extends Phaser.Scene{
   constructor(){super('wheel');this.spinning=false}
   create(){
-    const {width:w,height:h}=this.scale;this.cameras.main.setBackgroundColor('#0a0718');
-    this.add.text(w/2,28,'🎡 Spin the Wheel',{fontSize:'24px',color:'#fff'}).setOrigin(.5);this.lim=this.add.text(w/2,56,'',{fontSize:'16px',color:'#a9b7d8'}).setOrigin(.5);this.u();
-    const R=Math.min(w,h)*.28,P=['+10','+20','+30','+50','Try again','x2','+15','Jackpot'],seg=(Math.PI*2)/P.length,g=this.add.graphics({x:0,y:0});
-    for(let i=0;i<P.length;i++){g.fillStyle(i%2?0x8a5dff:0x56d0ff,1);g.slice(R+5,R+5,R,i*seg,(i+1)*seg,false).fillPath()}g.lineStyle(6,0xffffff).strokeCircle(R+5,R+5,R);
-    const key='wheelTex';g.generateTexture(key,R*2+10,R*2+10);g.destroy();this.wheel=this.add.image(w/2,h/2,key).setInteractive({useHandCursor:true});this.wheel.on('pointerdown',()=>this.spin(P));
-    P.forEach((p,i)=>{const a=i*seg+seg/2-Math.PI/2,x=w/2+Math.cos(a)*(R*.65),y=h/2+Math.sin(a)*(R*.65);this.add.text(x,y,p,{fontSize:'18px',color:'#0a0718'}).setOrigin(.5)});
-    this.add.triangle(w/2,h/2-R-18,0,18,18,18,9,0,0xffd86a).setStrokeStyle(2,0xffffff);this.input.keyboard.on('keydown-ESC',()=>this.menu())}
-  u(){const left=Math.max(0,SETTINGS.wheelDailyLimit-spins());this.lim?.setText(`Spins left today: ${left}/${SETTINGS.wheelDailyLimit}`)}
-  spin(P){if(this.spinning)return;const used=spins();if(used>=SETTINGS.wheelDailyLimit){toast(this,'Limit reached. Come back tomorrow!');return}
-    this.spinning=true;Sound.click();const seg=360/P.length,t=Phaser.Math.Between(0,P.length-1),angle=360*4+(t*seg)+seg/2;
-    this.tweens.add({targets:this.wheel,angle,duration:3200,ease:'Cubic.easeOut',onComplete:()=>{this.spinning=false;incSpin();this.u();const p=P[t];toast(this,`You got: ${p}`);Sound.ding();saveScore('wheel',['+10','+15','+20','+30','+50','x2','Jackpot'].indexOf(p)+1)}})}
-  menu(){this.scene.stop();showMenu()}
+    const {width:w,height:h}=this.scale; this.cameras.main.setBackgroundColor('#0a0718');
+    this.add.text(w/2,28,'🎡 Spin the Wheel',{fontSize:'24px',color:'#fff'}).setOrigin(.5);
+    this.lim=this.add.text(w/2,56,'',{fontSize:'16px',color:'#a9b7d8'}).setOrigin(.5); this.u();
+
+    const R=Math.min(w,h)*.28, P=['+10','+20','+30','+50','Try again','x2','+15','Jackpot'], seg=(Math.PI*2)/P.length;
+    const g=this.add.graphics({x:0,y:0});
+    for(let i=0;i<P.length;i++){ g.fillStyle(i%2?0x8a5dff:0x56d0ff,1); g.slice(R+5,R+5,R,i*seg,(i+1)*seg,false).fillPath(); }
+    g.lineStyle(6,0xffffff).strokeCircle(R+5,R+5,R);
+    const key='wheelTex'; g.generateTexture(key,R*2+10,R*2+10); g.destroy();
+
+    this.wheel=this.add.image(w/2,h/2,key).setInteractive({useHandCursor:true});
+    this.wheel.on('pointerdown',()=>this.spin(P));
+    P.forEach((p,i)=>{const a=i*seg+seg/2-Math.PI/2,x=w/2+Math.cos(a)*(R*.65),y=h/2+Math.sin(a)*(R*.65); this.add.text(x,y,p,{fontSize:'18px',color:'#0a0718'}).setOrigin(.5);});
+    this.add.triangle(w/2,h/2-R-18,0,18,18,18,9,0,0xffd86a).setStrokeStyle(2,0xffffff);
+    this.input.keyboard.on('keydown-ESC',()=>this.menu());
+  }
+  u(){ const left=Math.max(0,SETTINGS.wheelDailyLimit-spins()); this.lim?.setText(`Spins left today: ${left}/${SETTINGS.wheelDailyLimit}`); }
+  spin(P){ if(this.spinning)return; const used=spins(); if(used>=SETTINGS.wheelDailyLimit){ toast(this,'Limit reached. Come back tomorrow!'); return; }
+    this.spinning=true; Sound.click();
+    const seg=360/P.length, t=Phaser.Math.Between(0,P.length-1), angle=360*4+(t*seg)+seg/2;
+    this.tweens.add({targets:this.wheel,angle,duration:3200,ease:'Cubic.easeOut',onComplete:()=>{
+      this.spinning=false; incSpin(); this.u(); const prize=P[t]; toast(this,`You got: ${prize}`); Sound.ding();
+      saveScore('wheel',['+10','+15','+20','+30','+50','x2','Jackpot'].indexOf(prize)+1);
+    }});
+  }
+  menu(){ this.scene.stop(); showMenu(); }
 }
 
-/* ====== boot & UI ====== */
-const game=new Phaser.Game({type:Phaser.AUTO,backgroundColor:'#090a16',scale:{mode:Phaser.Scale.RESIZE,autoCenter:Phaser.Scale.CENTER_BOTH,width:W(),height:H()},physics:{default:'arcade',arcade:{debug:false}},scene:[MoleScene,CatchScene,WheelScene]});
-const menu=document.getElementById('menu'), starter=document.getElementById('starter'), backBtn=document.getElementById('backBtn'), startBtn=document.getElementById('startBtn'),
-      startTitle=document.getElementById('startTitle'), startHint=document.getElementById('startHint'), cd=document.getElementById('countdown'), backGameBtn=document.getElementById('backGameBtn');
+/* ================= boot & UI ================= */
+const game=new Phaser.Game({
+  type:Phaser.AUTO, backgroundColor:'#090a16',
+  scale:{mode:Phaser.Scale.RESIZE,autoCenter:Phaser.Scale.CENTER_BOTH,width:W(),height:H()},
+  physics:{default:'arcade',arcade:{debug:false}},
+  scene:[MoleScene,CatchScene,WheelScene]
+});
+
+const menu=document.getElementById('menu');
+const starter=document.getElementById('starter');
+const backBtn=document.getElementById('backBtn');
+const startBtn=document.getElementById('startBtn');
+const startTitle=document.getElementById('startTitle');
+const startHint=document.getElementById('startHint');
+const cd=document.getElementById('countdown');
+const backGameBtn=document.getElementById('backGameBtn');
 
 function stopAll(){ game.scene.getScenes(true).forEach(s=>game.scene.stop(s.scene.key)); }
-function showMenu(){ hideCombo();hideMult();menu.style.display='grid';starter.style.display='none';backGameBtn.style.display='none'; }
+function showMenu(){ hideCombo(); hideMult(); menu.style.display='grid'; starter.style.display='none'; backGameBtn.style.display='none'; }
 function hideMenu(){ menu.style.display='none'; }
 showMenu();
 
 let pending=null;
-function openStarter(mode){ pending=mode; startTitle.textContent=mode==='mole'?'Whack-a-Mole':mode==='catch'?'Catch the Coins':'Spin the Wheel';
-  startHint.textContent=mode==='mole'?'Tap animals to score. Avoid bombs!':mode==='catch'?'Move the basket to catch 🪙. Avoid 🧨. Grab ✨ for ×2!':'Tap the wheel to spin.'; starter.style.display='grid'; cd.style.display='none'; }
+function openStarter(mode){
+  pending=mode;
+  startTitle.textContent = mode==='mole' ? 'Whack-a-Mole' : mode==='catch' ? 'Catch the Coins' : 'Spin the Wheel';
+  startHint.textContent  = mode==='mole' ? 'Tap animals to score. Avoid bombs!' :
+                           mode==='catch' ? 'Move basket to catch 🪙; avoid 🧨; grab ✨ for ×2!' : 'Tap the wheel to spin.';
+  starter.style.display='grid'; cd.style.display='none';
+}
 function startScene(mode){ stopAll(); game.scene.start(mode); backGameBtn.style.display='inline-block'; }
-startBtn.onclick=()=>{ Sound.click(); cd.style.display='block'; let n=3; cd.textContent=n; const tick=()=>{ n--; if(n>0){ cd.textContent=n; setTimeout(tick,700); } else { starter.style.display='none'; startScene(pending); } }; setTimeout(tick,700); };
+
+startBtn.onclick=()=>{ Sound.click(); cd.style.display='block'; let n=3; cd.textContent=n;
+  const tick=()=>{ n--; if(n>0){ cd.textContent=n; setTimeout(tick,700); } else { starter.style.display='none'; startScene(pending); } };
+  setTimeout(tick,700);
+};
 backBtn.onclick=()=>{ Sound.click(); starter.style.display='none'; showMenu(); };
 document.querySelectorAll('#menu [data-mode]').forEach(b=>b.addEventListener('click',()=>{ hideMenu(); openStarter(b.dataset.mode); }));
 backGameBtn.onclick=()=>{ Sound.click(); stopAll(); showMenu(); };
@@ -215,14 +322,22 @@ backGameBtn.onclick=()=>{ Sound.click(); stopAll(); showMenu(); };
 document.getElementById('claim').onclick=()=>{ const s=game.scene.getScenes(true)[0]; if(s) toast(s,'Reward claimed!'); };
 addEventListener('resize',()=>game.scale.resize(W(),H()));
 
-/* leaderboard */
+/* leaderboard overlay */
 const lb=document.getElementById('leaderboardOverlay'), lbTables=document.getElementById('lbTables');
-document.getElementById('openLeaderboard').onclick=()=>{ renderLB('all'); lb.style.display='grid'; }; document.getElementById('closeLB').onclick=()=>lb.style.display='none';
+document.getElementById('openLeaderboard').onclick=()=>{ renderLB('all'); lb.style.display='grid'; };
+document.getElementById('closeLB').onclick=()=>{ lb.style.display='none'; };
 document.getElementById('clearLB').onclick=()=>{ ['mole','catch','wheel'].forEach(g=>{localStorage.removeItem(`lb_${g}`);localStorage.removeItem(`best_${g}`)}); renderLB('all'); };
 document.querySelectorAll('#lbTabs [data-lb]').forEach(b=>b.onclick=()=>renderLB(b.dataset.lb));
-function renderLB(which){ const gs=which==='all'?['mole','catch','wheel']:[which]; lbTables.innerHTML=gs.map(g=>{const rows=getScores(g),best=getBest(g);
-  const body=rows.length?rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.score}</td><td class="muted">${new Date(r.ts).toLocaleString()}</td></tr>`).join(''):`<tr><td colspan="3" class="muted">No scores yet</td></tr>`;
-  return `<h3 style="margin:14px 0 6px">${g.toUpperCase()} — Best: ${best}</h3><table><thead><tr><th>#</th><th>Score</th><th>When</th></tr></thead><tbody>${body}</tbody></table>` }).join(''); }
+function renderLB(which){
+  const gs=which==='all'?['mole','catch','wheel']:[which];
+  lbTables.innerHTML=gs.map(g=>{
+    const rows=getScores(g), best=getBest(g);
+    const body=rows.length?rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.score}</td><td class="muted">${new Date(r.ts).toLocaleString()}</td></tr>`).join('')
+                          :`<tr><td colspan="3" class="muted">No scores yet</td></tr>`;
+    return `<h3 style="margin:14px 0 6px">${g.toUpperCase()} — Best: ${best}</h3>
+            <table><thead><tr><th>#</th><th>Score</th><th>When</th></tr></thead><tbody>${body}</tbody></table>`;
+  }).join('');
+}
 </script>
 </body>
 </html>
