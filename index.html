@@ -22,20 +22,21 @@
   table{width:100%;border-collapse:collapse;margin-top:12px}
   th,td{padding:8px 10px;border-bottom:1px solid #2b325d;text-align:left}
 
-  .comboChip{position:fixed;left:50%;top:68px;transform:translateX(-50%);background:#1b2040;border:1px solid #2b325d;border-radius:999px;padding:6px 12px;font-weight:800;display:none;z-index:7;pointer-events:none}
-  .multBadge{position:fixed;left:50%;top:104px;transform:translateX(-50%);background:#20351a;border:1px solid #2b5d33;border-radius:999px;padding:6px 12px;font-weight:800;display:none;z-index:7;pointer-events:none}
+  .chip{position:fixed;left:50%;transform:translateX(-50%);z-index:7;pointer-events:none;display:none;
+        background:#1b2040;border:1px solid #2b325d;border-radius:999px;padding:6px 12px;font-weight:800}
+  #combo{top:68px}
+  #mult{top:104px;background:#20351a;border-color:#2b5d33}
 
   #backGameBtn{position:fixed;left:12px;top:12px;z-index:7;background:#1b2040;color:#cfe1ff;border:1px solid #2b325d;
     padding:8px 12px;border-radius:10px;font-weight:700;cursor:pointer;display:none}
   #errBadge{position:fixed;right:12px;top:12px;background:#4b1010;border:1px solid #7d1b1b;border-radius:10px;padding:8px 12px;display:none;z-index:9}
 </style>
-
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
   <div id="hud"><button id="claim">Claim reward</button></div>
-  <div id="combo" class="comboChip">Combo ×2</div>
-  <div id="mult" class="multBadge">×2 active</div>
+  <div id="combo" class="chip">Combo ×2</div>
+  <div id="mult" class="chip">×2 active</div>
   <button id="backGameBtn">← Menu</button>
   <div id="errBadge"></div>
 
@@ -86,69 +87,99 @@
   </div>
 
 <script>
-/* ============== error badge for first JS error ============== */
-(function(){
-  const badge=document.getElementById('errBadge');
-  const show=(msg)=>{badge.textContent=msg;badge.style.display='block'};
-  addEventListener('error',e=>show(e.message));
-  addEventListener('unhandledrejection',e=>show(String(e.reason)));
+/* ============== error badge (first error only) ============== */
+(() => {
+  const b = document.getElementById('errBadge');
+  const show = msg => { if (b.style.display !== 'block') { b.textContent = msg; b.style.display = 'block'; } };
+  addEventListener('error', e => show(e.message));
+  addEventListener('unhandledrejection', e => show(String(e.reason)));
 })();
 
 /* ============== tiny sound engine ============== */
-const Sound=(()=>{const c=new (window.AudioContext||window.webkitAudioContext)();
-  const resume=()=>c.state==='suspended'&&c.resume(); addEventListener('pointerdown',resume,{once:true});
-  const tone=(f,d=0.12,t='sine',v=.18)=>{const o=c.createOscillator(),g=c.createGain();o.type=t;o.frequency.value=f;o.connect(g);g.connect(c.destination);
-    const T=c.currentTime;g.gain.setValueAtTime(0,T);g.gain.linearRampToValueAtTime(v,T+.01);g.gain.exponentialRampToValueAtTime(.0001,T+d);o.start(T);o.stop(T+d+.02)};
-  const noise=(d=.25,v=.3)=>{const n=c.sampleRate*d,b=c.createBuffer(1,n,c.sampleRate),a=b.getChannelData(0);for(let i=0;i<n;i++)a[i]=(Math.random()*2-1)*(1-i/n);
-    const s=c.createBufferSource();s.buffer=b;const g=c.createGain();g.gain.value=v;s.connect(g);g.connect(c.destination);s.start()};
-  return {pop:()=>tone(1200,.08,'triangle',.16),click:()=>tone(880,.05,'square',.1),
-          ding:()=>[660,990,1320].forEach((f,i)=>tone(f,.12-.02*i,'sine',.16)),boom:()=>{noise(.22,.35);tone(90,.2,'sine',.12)}}})();
+const Sound = (() => {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const resume = () => ctx.state === 'suspended' && ctx.resume();
+  addEventListener('pointerdown', resume, { once:true });
+
+  function tone(freq, dur=0.12, type='sine', vol=0.18) {
+    const o=ctx.createOscillator(), g=ctx.createGain();
+    o.type=type; o.frequency.value=freq; o.connect(g); g.connect(ctx.destination);
+    const t=ctx.currentTime; g.gain.setValueAtTime(0,t);
+    g.gain.linearRampToValueAtTime(vol,t+.01); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    o.start(t); o.stop(t+dur+.02);
+  }
+  function noise(d=0.25,v=.3){
+    const n=ctx.sampleRate*d, buf=ctx.createBuffer(1,n,ctx.sampleRate), ch=buf.getChannelData(0);
+    for(let i=0;i<n;i++) ch[i]=(Math.random()*2-1)*(1-i/n);
+    const s=ctx.createBufferSource(); s.buffer=buf;
+    const g=ctx.createGain(); g.gain.value=v; s.connect(g); g.connect(ctx.destination); s.start();
+  }
+  return { pop:()=>tone(1200,.08,'triangle',.16), click:()=>tone(880,.05,'square',.1),
+           ding:()=>[660,990,1320].forEach((f,i)=>tone(f,.12-.02*i,'sine',.16)),
+           boom:()=>{ noise(.22,.35); tone(90,.2,'sine',.12); } };
+})();
 
 /* ============== helpers & settings ============== */
-const W=()=>innerWidth,H=()=>innerHeight;
-const SETTINGS={ rewardThreshold:{mole:14,catch:16}, mole:{duration:25,gridSmall:3,gridLarge:4,popEvery:620,upTime:780}, wheelDailyLimit:3 };
+const W=()=>innerWidth, H=()=>innerHeight;
+const SETTINGS = {
+  rewardThreshold:{ mole:14, catch:16 },
+  mole:{ duration:25, gridSmall:3, gridLarge:4, popEvery:620, upTime:780 },
+  wheelDailyLimit:3
+};
 
 const comboChip=document.getElementById('combo'), multChip=document.getElementById('mult');
-const showCombo=(m)=>{comboChip.textContent=`Combo ×${m}`;comboChip.style.display='block'};
+const showCombo=m=>{comboChip.textContent=`Combo ×${m}`;comboChip.style.display='block'};
 const hideCombo=()=>comboChip.style.display='none';
-const showMult=(s)=>{multChip.textContent=`×2 active (${s}s)`;multChip.style.display='block'};
+const showMult=s=>{multChip.textContent=`×2 active (${s}s)`;multChip.style.display='block'};
 const hideMult=()=>multChip.style.display='none';
 
-function toast(scene,msg){const t=scene.add.text(scene.scale.width/2,scene.scale.height*.85,msg,{fontSize:'22px',color:'#fff',backgroundColor:'#0008',padding:{x:12,y:8}}).setOrigin(.5);
-  scene.tweens.add({targets:t,alpha:0,duration:1200,delay:800,onComplete:()=>t.destroy()})}
-function saveScore(game,val){try{const k=`lb_${game}`;const L=JSON.parse(localStorage.getItem(k)||"[]");L.push({score:val,ts:Date.now()});L.sort((a,b)=>b.score-a.score);
-  localStorage.setItem(k,JSON.stringify(L.slice(0,5)));const bk=`best_${game}`;const best=Math.max(val,+(localStorage.getItem(bk)||0));localStorage.setItem(bk,best)}catch{}}
-const getScores=(g)=>{try{return JSON.parse(localStorage.getItem(`lb_${g}`)||"[]")}catch{return[]}}, getBest=(g)=>+localStorage.getItem(`best_${g}`)||0;
-
-function makeRectTexture(s,k,w,h,f,st=0xffffff){
-  if(s.textures.exists(k))return;
-  const g=s.add.graphics();g.fillStyle(f,1).fillRoundedRect(0,0,w,h,6);g.lineStyle(2,st,1).strokeRoundedRect(0,0,w,h,6);
-  g.generateTexture(k,w,h);g.destroy();
+function toast(scene,msg){
+  const t=scene.add.text(scene.scale.width/2,scene.scale.height*.85,msg,
+    {fontSize:'22px',color:'#fff',backgroundColor:'#0008',padding:{x:12,y:8}}).setOrigin(.5);
+  scene.tweens.add({targets:t,alpha:0,duration:1200,delay:800,onComplete:()=>t.destroy()});
 }
-function makeEmojiTexture(s,k,emoji,size=48){ /* ✅ correct API */
-  if(s.textures.exists(k))return;
-  const c=document.createElement('canvas');c.width=c.height=size;
-  const x=c.getContext('2d');x.textAlign='center';x.textBaseline='middle';
+function saveScore(game,value){
+  try{
+    const key=`lb_${game}`;
+    const list=JSON.parse(localStorage.getItem(key)||"[]");
+    list.push({score:value,ts:Date.now()}); list.sort((a,b)=>b.score-a.score);
+    localStorage.setItem(key,JSON.stringify(list.slice(0,5)));
+    const bestKey=`best_${game}`, best=Math.max(value, +(localStorage.getItem(bestKey)||0));
+    localStorage.setItem(bestKey,best);
+  }catch{}
+}
+const getScores=g=>{try{return JSON.parse(localStorage.getItem(`lb_${g}`)||"[]")}catch{return[]}};
+const getBest=g=>+localStorage.getItem(`best_${g}`)||0;
+
+function makeRectTexture(s,k,w,h,fill,stroke=0xffffff){
+  if(s.textures.exists(k)) return;
+  const g=s.add.graphics();
+  g.fillStyle(fill,1).fillRoundedRect(0,0,w,h,6);
+  g.lineStyle(2,stroke,1).strokeRoundedRect(0,0,w,h,6);
+  g.generateTexture(k,w,h); g.destroy();
+}
+function makeEmojiTexture(s,k,emoji,size=48){
+  if(s.textures.exists(k)) return;
+  const c=document.createElement('canvas'); c.width=c.height=size;
+  const x=c.getContext('2d'); x.textAlign='center'; x.textBaseline='middle';
   x.font=`${Math.floor(size*.9)}px "Apple Color Emoji","Segoe UI Emoji",sans-serif`;
   x.fillText(emoji,size/2,size/2);
-  s.textures.addCanvas(k,c);
+  s.textures.addCanvas(k,c);          /* <= Phaser v3 API */
 }
 
-/* ------------------------ Whack-a-Mole (safe version) ------------------------ */
+/* ============== Whack-a-Mole (safe tweens) ============== */
 class MoleScene extends Phaser.Scene{
   constructor(){ super('mole'); this.score=0; this.tl=SETTINGS.mole.duration; this.holes=[]; this.combo=0; this.ct=null; }
   create(){
     const {width:w,height:h}=this.scale; this.cameras.main.setBackgroundColor('#0a0718');
     this.add.text(w/2,28,'🎯 Whack-a-Mole',{fontSize:'24px',color:'#fff'}).setOrigin(.5);
-    this.sc=this.add.text(20,16,'0',{fontSize:'20px',color:'#8EFF98'}); 
+    this.sc=this.add.text(20,16,'0',{fontSize:'20px',color:'#8EFF98'});
     this.tm=this.add.text(w-20,16,this.tl+'s',{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
 
-    // textures
     ['emoji_hamster','emoji_cat','emoji_dog','emoji_rabbit'].forEach((k,i)=>makeEmojiTexture(this,k,['🐹','🐱','🐶','🐰'][i],64));
     makeEmojiTexture(this,'emoji_bomb','💣',64);
     makeRectTexture(this,'holePlate',96,28,0x1b2040,0x2b325d);
 
-    // grid
     const cols=(Math.min(w,h)<720)?SETTINGS.mole.gridSmall:SETTINGS.mole.gridLarge;
     const rows=cols, gridW=Math.min(w*.9,h*.78), cell=gridW/cols, sx=w/2-gridW/2+cell/2, sy=h*.2+cell/2;
     const animals=['emoji_hamster','emoji_cat','emoji_dog','emoji_rabbit'];
@@ -157,114 +188,131 @@ class MoleScene extends Phaser.Scene{
       for(let c=0;c<cols;c++){
         const x=sx+c*cell, y=sy+r*cell;
         const plate=this.add.image(x,y+20,'holePlate');
-        const face=this.add.image(x,y,'emoji_hamster')
-          .setVisible(false)
-          .setScale(1)
-          .setInteractive({useHandCursor:true});
-
+        const face=this.add.image(x,y,'emoji_hamster').setVisible(false).setScale(1).setInteractive({useHandCursor:true});
         face.on('pointerdown',()=>{
-          // guard: ignore if already hidden or mid-swap
           if(!face.visible) return;
-
-          const isBomb = face.getData('type')==='bomb';
-          // give a tiny scale pulse instead of a tween that moves/depends on y
+          const bomb = face.getData('type')==='bomb';
           face.setScale(0.9);
-          this.time.delayedCall(90,()=>{ if (face.visible) face.setScale(1); });
-
-          if(isBomb){
-            this.cameras.main.shake(120,.003); Sound.boom();
-            this.score=Math.max(0,this.score-2); this.resetCombo(); hideCombo();
-          }else{
-            const m=this.bump(); Sound.pop(); this.score+=m; showCombo(m);
-          }
-          // hide immediately; no tweens on a possibly invalid target
-          face.setVisible(false);
-          this.sc.setText(this.score);
+          this.time.delayedCall(90,()=>{ if(face.visible) face.setScale(1); });
+          if(bomb){ this.cameras.main.shake(120,.003); Sound.boom(); this.score=Math.max(0,this.score-2); this.resetCombo(); hideCombo(); }
+          else    { const m=this.bump(); Sound.pop(); this.score+=m; showCombo(m); }
+          face.setVisible(false); this.sc.setText(this.score);
         });
-
         this.holes.push({plate,face});
       }
     }
 
-    // pop loop (safe show/hide)
     this.pop=this.time.addEvent({
       delay:SETTINGS.mole.popEvery, loop:true, callback:()=>{
         const free=this.holes.filter(h=>!h.face.visible); if(!free.length) return;
         const h=Phaser.Utils.Array.GetRandom(free);
-
-        const isBomb=Math.random()<.18;
-        const tex=isBomb ? 'emoji_bomb' : Phaser.Utils.Array.GetRandom(animals);
-        h.face.setTexture(tex).setData('type', isBomb?'bomb':'animal');
-        h.face.setScale(1).setVisible(true);
-
-        // simple “pop” effect by scaling up and back; no position tweens
-        h.face.setScale(0.85);
+        const bomb=Math.random()<.18;
+        const tex=bomb?'emoji_bomb':Phaser.Utils.Array.GetRandom(['emoji_hamster','emoji_cat','emoji_dog','emoji_rabbit']);
+        h.face.setTexture(tex).setData('type', bomb?'bomb':'animal').setScale(0.85).setVisible(true);
         this.time.delayedCall(100,()=>{ if(h.face.visible) h.face.setScale(1); });
-
-        // auto hide after upTime if still visible
         this.time.delayedCall(SETTINGS.mole.upTime,()=>{ if(h.face.visible) h.face.setVisible(false); });
       }
     });
 
-    // timer
-    this.clock=this.time.addEvent({
-      delay:1000, loop:true,
-      callback:()=>{
-        this.tl--; this.tm.setText(this.tl+'s');
-        if(this.tl<=0) this.end();
-      }
-    });
-
+    this.clock=this.time.addEvent({ delay:1000, loop:true, callback:()=>{ this.tl--; this.tm.setText(this.tl+'s'); if(this.tl<=0) this.end(); }});
     this.input.keyboard.on('keydown-ESC',()=>this.menu());
   }
-
-  bump(){ 
-    if(this.ct){ this.combo=Math.min(this.combo+1,9); } else { this.combo=1; }
-    clearTimeout(this.ct);
-    this.ct=setTimeout(()=>{ this.combo=0; hideCombo(); },1500);
-    return this.combo>=5?3:this.combo>=3?2:1;
-  }
+  bump(){ if(this.ct){ this.combo=Math.min(this.combo+1,9);} else { this.combo=1; } clearTimeout(this.ct);
+          this.ct=setTimeout(()=>{ this.combo=0; hideCombo(); },1500);
+          return this.combo>=5?3:this.combo>=3?2:1; }
   resetCombo(){ this.combo=0; clearTimeout(this.ct); this.ct=null; }
-
-  end(){
-    this.pop?.remove(); this.clock?.remove(); this.resetCombo(); hideCombo();
-    this.scene.pause(); saveScore('mole',this.score);
-    const {width:w,height:h}=this.scale;
-    const box=this.add.rectangle(w/2,h/2,w*.84,170,0x000000,.7);
-    const t=this.add.text(w/2,h/2,`Time!\nScore: ${this.score}\nClick to return`,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
-    [box,t].forEach(e=>e.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.menu()));
-  }
+  end(){ this.pop?.remove(); this.clock?.remove(); this.resetCombo(); hideCombo();
+        this.scene.pause(); saveScore('mole',this.score);
+        const {width:w,height:h}=this.scale, box=this.add.rectangle(w/2,h/2,w*.84,170,0x000000,.7),
+              t=this.add.text(w/2,h/2,`Time!\nScore: ${this.score}\nClick to return`,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
+        [box,t].forEach(e=>e.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.menu())); }
   menu(){ this.scene.stop(); showMenu(); }
 }
 
+/* ============== Catch the Coins (coins/bombs/multiplier) ============== */
+class CatchScene extends Phaser.Scene{
+  constructor(){ super('catch'); this.score=0; this.tl=25; this.combo=0; this.ct=null; this.mult=1; this.mTimer=null; }
+  create(){
+    const {width:w,height:h}=this.scale; this.cameras.main.setBackgroundColor('#0a0718');
+    this.add.text(w/2,28,'🧺 Catch the Coins',{fontSize:'24px',color:'#fff'}).setOrigin(.5);
+    this.sc=this.add.text(20,16,'Score: 0',{fontSize:'20px',color:'#8EFF98'});
+    this.tm=this.add.text(w-20,16,this.tl+'s',{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
 
+    makeEmojiTexture(this,'emoji_coin','🪙',52);
+    makeEmojiTexture(this,'emoji_bombSmall','🧨',52);
+    makeEmojiTexture(this,'emoji_star','✨',52);
+    makeRectTexture(this,'basketRect',180,26,0xffd86a);
+
+    this.physics.world.setBounds(0,0,w,h);
+    this.basket=this.physics.add.image(w/2,h-60,'basketRect').setImmovable(true); this.basket.body.allowGravity=false;
+
+    this.items=this.physics.add.group({allowGravity:true, gravityY: 780});
+    this.physics.add.overlap(this.basket,this.items,(_,it)=>{
+      const type=it.getData('type');
+      if(type==='coin'){ const m=this.bump()*this.mult; Sound.pop(); this.score+=m; showCombo(m); this.sc.setText('Score: '+this.score); }
+      else if(type==='bomb'){ Sound.boom(); this.score=Math.max(0,this.score-3); this.sc.setText('Score: '+this.score); this.cameras.main.shake(120,.003); this.resetCombo(); hideCombo(); }
+      else if(type==='mult'){ Sound.ding(); this.activateMult(6); }
+      it.destroy();
+      if(this.score>=SETTINGS.rewardThreshold.catch && getBest('catch')<SETTINGS.rewardThreshold.catch) toast(this,'🎉 Reward unlocked!');
+    });
+
+    this.spawnEvt=this.time.addEvent({delay:520,loop:true,callback:()=>this.spawn()});
+    this.events.on('update',()=>this.items.children.iterate(c=>{ if(c && c.y>h+60) c.destroy(); }));
+    this.input.on('pointermove',p=>{ this.basket.x=Phaser.Math.Clamp(p.x,90,w-90); this.basket.body.updateFromGameObject(); });
+    this.timer=this.time.addEvent({delay:1000,loop:true,callback:()=>{ this.tl--; this.tm.setText(this.tl+'s'); if(this.tl<=0) this.end(); }});
+    this.input.keyboard.on('keydown-ESC',()=>this.menu());
+  }
+  spawn(){
+    const w=this.scale.width, r=Math.random(); let key='emoji_coin', type='coin';
+    if(r<.14){ key='emoji_bombSmall'; type='bomb'; } else if(r>.84){ key='emoji_star'; type='mult'; }
+    const x=Phaser.Math.Between(40,w-40); const it=this.physics.add.image(x,-30,key).setData('type',type);
+    it.setVelocity(0,140).setMaxVelocity(430,1100); this.items.add(it);
+    const flash=this.add.rectangle(x,0,6,30,0xffffff).setAlpha(.7); this.tweens.add({targets:flash,alpha:0,y:60,duration:320,onComplete:()=>flash.destroy()});
+  }
+  activateMult(s){ this.mult=2; let left=s; showMult(left); clearInterval(this.mTimer);
+    this.mTimer=setInterval(()=>{ left--; if(left>0){ showMult(left);} else { clearInterval(this.mTimer); this.mult=1; hideMult(); } },1000); }
+  bump(){ if(this.ct){ this.combo=Math.min(this.combo+1,9);} else { this.combo=1; } clearTimeout(this.ct);
+          this.ct=setTimeout(()=>{ this.combo=0; hideCombo(); },1500);
+          return this.combo>=5?3:this.combo>=3?2:1; }
+  resetCombo(){ this.combo=0; clearTimeout(this.ct); this.ct=null; }
+  end(){ this.spawnEvt?.remove(); this.timer?.remove(); this.resetCombo(); hideCombo(); hideMult(); clearInterval(this.mTimer); this.mult=1;
+        this.scene.pause(); saveScore('catch',this.score);
+        const {width:w,height:h}=this.scale, box=this.add.rectangle(w/2,h/2,w*.84,170,0x000000,.7),
+              t=this.add.text(w/2,h/2,`Time!\nScore: ${this.score}\nClick to return`,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
+        [box,t].forEach(e=>e.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.menu())); }
+  menu(){ this.scene.stop(); showMenu(); }
+}
+
+/* ============== Spin the Wheel ============== */
 class WheelScene extends Phaser.Scene{
-  constructor(){super('wheel');this.spinning=false}
+  constructor(){ super('wheel'); this.spinning=false; }
   create(){
     const {width:w,height:h}=this.scale; this.cameras.main.setBackgroundColor('#0a0718');
     this.add.text(w/2,28,'🎡 Spin the Wheel',{fontSize:'24px',color:'#fff'}).setOrigin(.5);
-    this.lim=this.add.text(w/2,56,'',{fontSize:'16px',color:'#a9b7d8'}).setOrigin(.5); this.u();
+    this.lim=this.add.text(w/2,56,'',{fontSize:'16px',color:'#a9b7d8'}).setOrigin(.5); this.upd();
 
-    const R=Math.min(w,h)*.28, P=['+10','+20','+30','+50','Try again','x2','+15','Jackpot'], seg=(Math.PI*2)/P.length;
+    const R=Math.min(w,h)*.28, prizes=['+10','+20','+30','+50','Try again','x2','+15','Jackpot'], seg=(Math.PI*2)/prizes.length;
     const g=this.add.graphics({x:0,y:0});
-    for(let i=0;i<P.length;i++){ g.fillStyle(i%2?0x8a5dff:0x56d0ff,1); g.slice(R+5,R+5,R,i*seg,(i+1)*seg,false).fillPath(); }
-    g.lineStyle(6,0xffffff).strokeCircle(R+5,R+5,R);
-    const key='wheelTex'; g.generateTexture(key,R*2+10,R*2+10); g.destroy();
+    for(let i=0;i<prizes.length;i++){ g.fillStyle(i%2?0x8a5dff:0x56d0ff,1); g.slice(R+5,R+5,R,i*seg,(i+1)*seg,false).fillPath(); }
+    g.lineStyle(6,0xffffff).strokeCircle(R+5,R+5,R); const key='wheelTex'; g.generateTexture(key,R*2+10,R*2+10); g.destroy();
 
     this.wheel=this.add.image(w/2,h/2,key).setInteractive({useHandCursor:true});
-    this.wheel.on('pointerdown',()=>this.spin(P));
-    P.forEach((p,i)=>{const a=i*seg+seg/2-Math.PI/2,x=w/2+Math.cos(a)*(R*.65),y=h/2+Math.sin(a)*(R*.65); this.add.text(x,y,p,{fontSize:'18px',color:'#0a0718'}).setOrigin(.5);});
+    this.wheel.on('pointerdown',()=>this.spin(prizes));
+    prizes.forEach((p,i)=>{const a=i*seg+seg/2-Math.PI/2,x=w/2+Math.cos(a)*(R*.65),y=h/2+Math.sin(a)*(R*.65); this.add.text(x,y,p,{fontSize:'18px',color:'#0a0718'}).setOrigin(.5);});
     this.add.triangle(w/2,h/2-R-18,0,18,18,18,9,0,0xffd86a).setStrokeStyle(2,0xffffff);
     this.input.keyboard.on('keydown-ESC',()=>this.menu());
   }
-  u(){ const left=Math.max(0,SETTINGS.wheelDailyLimit-(+localStorage.getItem('wheel_'+new Date().toISOString().slice(0,10))||0));
-        this.lim?.setText(`Spins left today: ${left}/${SETTINGS.wheelDailyLimit}`); }
-  spin(P){ const k='wheel_'+new Date().toISOString().slice(0,10);
-    const used=(+localStorage.getItem(k)||0); if(this.spinning||used>=SETTINGS.wheelDailyLimit){ toast(this,'Limit reached. Come back tomorrow!'); return; }
+  key(){ return 'wheel_'+new Date().toISOString().slice(0,10); }
+  used(){ return +localStorage.getItem(this.key())||0; }
+  upd(){ const left=Math.max(0,SETTINGS.wheelDailyLimit-this.used()); this.lim?.setText(`Spins left today: ${left}/${SETTINGS.wheelDailyLimit}`); }
+  spin(prizes){
+    if(this.spinning) return;
+    if(this.used()>=SETTINGS.wheelDailyLimit){ toast(this,'Limit reached. Come back tomorrow!'); return; }
     this.spinning=true; Sound.click();
-    const seg=360/P.length, t=Phaser.Math.Between(0,P.length-1), angle=360*4+(t*seg)+seg/2;
+    const seg=360/prizes.length, t=Phaser.Math.Between(0,prizes.length-1), angle=360*4+(t*seg)+seg/2;
     this.tweens.add({targets:this.wheel,angle,duration:3200,ease:'Cubic.easeOut',onComplete:()=>{
-      this.spinning=false; localStorage.setItem(k,used+1); this.u(); const prize=P[t]; toast(this,`You got: ${prize}`); Sound.ding();
+      this.spinning=false; localStorage.setItem(this.key(), this.used()+1); this.upd();
+      const prize=prizes[t]; toast(this,`You got: ${prize}`); Sound.ding();
       saveScore('wheel',['+10','+15','+20','+30','+50','x2','Jackpot'].indexOf(prize)+1);
     }});
   }
@@ -312,6 +360,7 @@ document.querySelectorAll('#menu [data-mode]').forEach(b=>b.addEventListener('cl
 backGameBtn.onclick=()=>{ Sound.click(); stopAll(); showMenu(); };
 
 document.getElementById('claim').onclick=()=>{ const s=game.scene.getScenes(true)[0]; if(s) toast(s,'Reward claimed!'); };
+addEventListener('resize',()=>game.scale.resize(W(),H()));
 
 /* leaderboard overlay */
 const lb=document.getElementById('leaderboardOverlay'), lbTables=document.getElementById('lbTables');
@@ -329,6 +378,7 @@ function renderLB(which){
             <table><thead><tr><th>#</th><th>Score</th><th>When</th></tr></thead><tbody>${body}</tbody></table>`;
   }).join('');
 }
+
 </script>
 </body>
 </html>
