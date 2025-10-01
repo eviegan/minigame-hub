@@ -178,88 +178,110 @@ const Engine=(()=>{let raf=0,running=false,last=0,update=null,draw=null,cleanup=
   return {start,stop,shake};
 })();
 
-/* ---------------- Whack-a-Mole ---------------- */
 function playMole(){
-  const s={timeLeft:25, score:0, grid:[], moles:[], spawnT:0, combo:0, comboTO:null, floaters:[]};
+  // slower pace
+  const SPAWN_INTERVAL = 0.95;   // was 0.62 (slower spawn)
+  const UP_TIME        = 1.40;    // was 0.78 (stays up longer)
+  const HIT_RADIUS     = 44*DPR(); // bigger, easier to tap
+  const EMOJI_SIZE     = 64*DPR();
+  const EMOJI_Y_OFFSET = -6*DPR(); // nudge up so it looks visually centered
+
+  const s={ timeLeft:25, score:0, grid:[], moles:[], spawnT:0, combo:0, comboTO:null };
   const cols=(Math.min(innerWidth,innerHeight)<720)?3:4, rows=cols;
   const gridW=Math.min(W()*0.9,H()*0.78), cell=gridW/cols;
   const sx=W()/2-gridW/2+cell/2, sy=H()*0.2+cell/2;
+
   for(let r=0;r<rows;r++) for(let c=0;c<cols;c++) s.grid.push({x:sx+c*cell,y:sy+r*cell});
   const animals=['🐹','🐱','🐶','🐰'];
 
-  function bumpCombo(){ if(s.comboTO){ s.combo=Math.min(s.combo+1,9);} else s.combo=1;
-    clearTimeout(s.comboTO); s.comboTO=setTimeout(()=>{s.combo=0;hideCombo();},1500);
-    return s.combo>=5?3:s.combo>=3?2:1; }
-  function addFloater(x,y,text,color='#8EFF98'){ s.floaters.push({x,y,vy:-22*DPR(),life:0.9,text,color}); }
-
-  function endGame(){ Engine.stop(); clearTimeout(s.comboTO); hideCombo(); saveScore('mole',s.score); toast(`Time! Score: ${s.score}`); showMenu(); }
+  function bumpCombo(){
+    if(s.comboTO){ s.combo=Math.min(s.combo+1,9); } else s.combo=1;
+    clearTimeout(s.comboTO);
+    s.comboTO=setTimeout(()=>{ s.combo=0; hideCombo(); },1500);
+    return s.combo>=5?3:s.combo>=3?2:1;
+  }
+  function endGame(){
+    Engine.stop(); clearTimeout(s.comboTO); hideCombo();
+    saveScore('mole',s.score);
+    toast(`Time! Score: ${s.score}`);
+    showMenu();
+  }
 
   function update(dt){
+    // spawn
     s.spawnT-=dt;
     if(s.spawnT<=0){
       const freeIdx=s.grid.map((_,i)=>i).filter(i=>!s.moles.find(m=>m.idx===i));
       if(freeIdx.length){
         const idx=freeIdx[Math.floor(Math.random()*freeIdx.length)];
-        s.moles.push({idx, bomb:Math.random()<0.18, t:0.78, scale:0.7}); // start smaller
+        s.moles.push({ idx, bomb:Math.random()<0.18, t:UP_TIME });
       }
-      s.spawnT=0.62;
+      s.spawnT = SPAWN_INTERVAL;
     }
-    s.moles.forEach(m=>{ m.t-=dt; m.scale=Math.min(1,m.scale+dt*3); });
-    s.moles=s.moles.filter(m=>m.t>0);
-    s.floaters.forEach(f=>{ f.life-=dt; f.y+=f.vy*dt; });
-    s.floaters=s.floaters.filter(f=>f.life>0);
+    // countdown & cull
+    s.moles.forEach(m=>m.t-=dt);
+    s.moles = s.moles.filter(m=>m.t>0);
 
-    s.timeLeft-=dt; if(s.timeLeft<=0) endGame();
+    s.timeLeft-=dt;
+    if(s.timeLeft<=0) endGame();
   }
 
   function draw(ctx){
-    ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillStyle='#fff'; ctx.font=`${24*DPR()}px system-ui,sans-serif`; ctx.fillText('🎯 Whack-a-Mole', W()/2, 28*DPR());
-    ctx.fillStyle='#8EFF98'; ctx.font=`${20*DPR()}px system-ui,sans-serif`; ctx.fillText(String(Math.round(s.score)), 20*DPR(), 18*DPR());
-    ctx.fillStyle='#ffd86a'; ctx.textAlign='right'; ctx.fillText(`${Math.ceil(s.timeLeft)}s`, W()-20*DPR(), 18*DPR());
+    ctx.save();
+    ctx.textAlign='center'; ctx.textBaseline='middle';
 
-    // holes (centered)
+    // title & HUD
+    ctx.fillStyle='#fff'; ctx.font=`${24*DPR()}px system-ui,sans-serif`;
+    ctx.fillText('🎯 Whack-a-Mole', W()/2, 28*DPR());
+    ctx.fillStyle='#8EFF98'; ctx.font=`${20*DPR()}px system-ui,sans-serif`;
+    ctx.fillText(String(Math.round(s.score)), 20*DPR(), 18*DPR());
+    ctx.fillStyle='#ffd86a'; ctx.textAlign='right';
+    ctx.fillText(`${Math.ceil(s.timeLeft)}s`, W()-20*DPR(), 18*DPR());
+
+    // holes
     const plateW=96*DPR(), plateH=28*DPR();
     ctx.strokeStyle='#2b325d'; ctx.lineWidth=2*DPR(); ctx.fillStyle='#1b2040';
-    for(const g of s.grid) roundRect(ctx,g.x-plateW/2,g.y-plateH/2,plateW,plateH,6*DPR(),true,true);
+    for(const g of s.grid){
+      roundRect(ctx, g.x-plateW/2, g.y-plateH/2, plateW, plateH, 6*DPR(), true, true);
+    }
 
-    // moles (centered on hole)
+    // animals — perfectly centered (with a tiny Y compensation)
+    ctx.textAlign='center'; ctx.textBaseline='middle';
     for(const m of s.moles){
-      const g=s.grid[m.idx]; const size=64*DPR()*m.scale;
-      ctx.font=`${size}px "Apple Color Emoji","Segoe UI Emoji",system-ui`;
-      ctx.fillText(m.bomb?'💣':animals[(m.idx*7)%animals.length], g.x, g.y);
+      const g=s.grid[m.idx];
+      ctx.font=`${EMOJI_SIZE}px "Apple Color Emoji","Segoe UI Emoji",system-ui`;
+      ctx.fillText(m.bomb?'💣':animals[(m.idx*7)%animals.length], g.x, g.y + EMOJI_Y_OFFSET);
     }
 
-    // floaters
-    for(const f of s.floaters){
-      ctx.globalAlpha=Math.max(0,f.life); ctx.fillStyle=f.color; ctx.font=`${18*DPR()}px system-ui,sans-serif`;
-      ctx.fillText(f.text,f.x,f.y);
-    }
-    ctx.globalAlpha=1; ctx.restore();
+    ctx.restore();
   }
 
   function onPointer(type,x,y){
     if(type!=='down') return;
-    // tight hit circle around emoji center
-    const R=32*DPR();
+    // only the animal is tappable: circle around the emoji center
     for(const m of s.moles){
       const g=s.grid[m.idx];
-      if(Math.hypot(x-g.x,y-g.y)<=R){
+      const cx=g.x, cy=g.y + EMOJI_Y_OFFSET;
+      if(Math.hypot(x-cx, y-cy) <= HIT_RADIUS){
         if(m.bomb){
-          Engine.shake(0.25,8*DPR()); Sound.boom(); s.score=Math.max(0,s.score-2); s.combo=0; hideCombo();
-          addFloater(g.x,g.y,'-2','#ff9aa4');
+          // no shake/effects, just sound + penalty
+          Sound.boom();
+          s.score=Math.max(0,s.score-2);
+          s.combo=0; hideCombo();
         }else{
-          const mult=bumpCombo(); Sound.pop(); s.score+=mult; showCombo(mult);
-          addFloater(g.x,g.y,`+${mult}`,'#8EFF98');
+          const mult=bumpCombo();
+          Sound.pop();
+          s.score += mult; showCombo(mult);
         }
-        s.moles=s.moles.filter(mm=>mm!==m);
+        s.moles = s.moles.filter(mm=>mm!==m);
         break;
       }
     }
   }
 
-  Engine.start(update,draw,()=>{clearTimeout(s.comboTO);},onPointer);
+  Engine.start(update, draw, ()=>{ clearTimeout(s.comboTO); }, onPointer);
 }
+
 
 /* ---------------- Catch the Coins ---------------- */
 function playCatch(){
