@@ -77,6 +77,14 @@
     </div>
   </div>
 
+  <!-- Back to Menu button (visible during games) -->
+  <button id="backGameBtn" style="
+    position:fixed; left:12px; top:12px; z-index:7;
+    background:#1b2040; color:#cfe1ff; border:1px solid #2b325d;
+    padding:8px 12px; border-radius:10px; font-weight:700; cursor:pointer; display:none;">
+    ← Menu
+  </button>
+
 <script>
 /* ------------------------ tiny sound engine (WebAudio) ------------------------ */
 const Sound = (() => {
@@ -107,8 +115,8 @@ const Sound = (() => {
 /* ------------------------ shared utils ------------------------ */
 const W=()=>innerWidth, H=()=>innerHeight;
 const SETTINGS={
-  rewardThreshold:{ mole:14, catch:16 },   // target highs to unlock reward
-  mole:{ duration:25, gridSmall:3, gridLarge:4, popEvery:620, upTime:780 }, // s / grid / ms
+  rewardThreshold:{ mole:14, catch:16 },
+  mole:{ duration:25, gridSmall:3, gridLarge:4, popEvery:620, upTime:780 },
   wheelDailyLimit:3
 };
 const todayKey=()=>new Date().toISOString().slice(0,10);
@@ -123,7 +131,6 @@ function saveScore(game,value){
     const key=`lb_${game}`; const list=JSON.parse(localStorage.getItem(key)||"[]");
     list.push({score:value,ts:Date.now()}); list.sort((a,b)=>b.score-a.score);
     localStorage.setItem(key,JSON.stringify(list.slice(0,5)));
-    // best
     const bestKey=`best_${game}`; const best=Math.max(value, +(localStorage.getItem(bestKey)||0));
     localStorage.setItem(bestKey,best);
   }catch(e){}
@@ -155,7 +162,7 @@ function hideCombo(){ comboChip.style.display='none'; }
 function showMult(sec){ multChip.textContent=`×2 active (${sec}s)`; multChip.style.display='block'; }
 function hideMult(){ multChip.style.display='none'; }
 
-/* ------- Start overlay per game (fixed) ------- */
+/* ------- Start overlay per game ------- */
 let pendingMode=null;
 const starter = document.getElementById('starter');
 const startBtn = document.getElementById('startBtn');
@@ -177,16 +184,13 @@ function closeStarter(){ starter.style.display='none'; countdownEl.style.display
 
 /* Actually launch a Phaser scene */
 function startScene(mode){
-  // stop any running scenes
   game.scene.getScenes(true).forEach(s => game.scene.stop(s.scene.key));
   game.scene.start(mode);
-  // show the in-game back button
   document.getElementById('backGameBtn').style.display='inline-block';
 }
 
 startBtn.onclick = () => {
   Sound.click();
-  // 3-2-1 countdown then start
   countdownEl.style.display='block';
   let n=3; countdownEl.textContent=n;
   const iv=setInterval(()=>{
@@ -197,26 +201,7 @@ startBtn.onclick = () => {
 };
 backBtn.onclick = () => { Sound.click(); starter.style.display='none'; showMenu(); };
 
-/* Menu launches the starter */
-document.querySelectorAll('#menu [data-mode]').forEach(b=>{
-  b.addEventListener('click',()=>{ hideMenu(); openStarter(b.dataset.mode); });
-});
-
-/* Back to menu while in-game */
-const backGameBtn=document.getElementById('backGameBtn');
-backGameBtn.onclick=()=>{
-  Sound.click();
-  // stop scenes, hide button, show menu
-  game.scene.getScenes(true).forEach(s => game.scene.stop(s.scene.key));
-  backGameBtn.style.display='none';
-  showMenu();
-};
-
-/* Also hide the in-game back button when menu shows */
-function showMenu(){ hideCombo(); hideMult(); menu.style.display='grid'; backGameBtn.style.display='none'; }
-function hideMenu(){ menu.style.display='none'; }
-
-/* ------------------------ Whack-a-Mole (animals + bomb + combo) ------------------------ */
+/* ------------------------ Games ------------------------ */
 class MoleScene extends Phaser.Scene{
   constructor(){ super('mole'); this.score=0; this.timeLeft=SETTINGS.mole.duration; this.rewarded=false; this.holes=[]; this.combo=0; this.comboTimer=null; }
   create(){
@@ -237,7 +222,6 @@ class MoleScene extends Phaser.Scene{
     const rows=cols;
     const gridW=Math.min(width*0.9,height*0.78);
     const cell=gridW/cols, startX=width/2-gridW/2+cell/2, startY=height*0.2+cell/2;
-
     const animals=['emoji_hamster','emoji_cat','emoji_dog','emoji_rabbit'];
 
     for(let r=0;r<rows;r++){
@@ -245,7 +229,6 @@ class MoleScene extends Phaser.Scene{
         const x=startX+c*cell, y=startY+r*cell;
         const plate=this.add.image(x,y+20,'holePlate');
         const face=this.add.image(x,y,'emoji_hamster').setVisible(false).setInteractive({useHandCursor:true});
-
         face.on('pointerdown',()=>{
           if(!face.visible)return;
           if(face.getData('type')==='bomb'){
@@ -259,7 +242,6 @@ class MoleScene extends Phaser.Scene{
           this.tweens.add({targets:face, y:face.y-12, duration:90, yoyo:true, onComplete:()=>face.setVisible(false)});
           if(!this.rewarded && getBest('mole')<SETTINGS.rewardThreshold.mole && this.score>=SETTINGS.rewardThreshold.mole) toast(this,'🎉 Reward unlocked!');
         });
-
         this.holes.push({plate,face});
       }
     }
@@ -267,7 +249,6 @@ class MoleScene extends Phaser.Scene{
     this.popEvt=this.time.addEvent({ delay:SETTINGS.mole.popEvery, loop:true, callback:()=>{
       const free=this.holes.filter(h=>!h.face.visible); if(!free.length)return;
       const h=Phaser.Utils.Array.GetRandom(free);
-
       const isBomb=Math.random()<0.18;
       const tex=isBomb ? 'emoji_bomb' : Phaser.Utils.Array.GetRandom(animals);
       h.face.setTexture(tex).setData('type', isBomb ? 'bomb' : 'animal');
@@ -279,29 +260,19 @@ class MoleScene extends Phaser.Scene{
     this.time.addEvent({delay:1000,loop:true,callback:()=>{ this.timeLeft--; this.timerText.setText(this.timeLeft+'s'); if(this.timeLeft<=0) this.endGame(); }});
     this.input.keyboard.on('keydown-ESC',()=>this.returnToMenu());
   }
-
-  bumpCombo(){
-    if(this.comboTimer){ this.combo=Math.min(this.combo+1,9); } else { this.combo=1; }
-    clearTimeout(this.comboTimer);
-    this.comboTimer=setTimeout(()=>{ this.combo=0; hideCombo(); },1500);
-    return this.combo>=5 ? 3 : this.combo>=3 ? 2 : 1;
-  }
+  bumpCombo(){ if(this.comboTimer){ this.combo=Math.min(this.combo+1,9); } else { this.combo=1; }
+    clearTimeout(this.comboTimer); this.comboTimer=setTimeout(()=>{ this.combo=0; hideCombo(); },1500);
+    return this.combo>=5 ? 3 : this.combo>=3 ? 2 : 1; }
   resetCombo(){ this.combo=0; clearTimeout(this.comboTimer); this.comboTimer=null; }
-
-  endGame(){
-    this.popEvt?.remove(); this.resetCombo(); hideCombo();
-    this.scene.pause(); saveScore('mole',this.score);
+  endGame(){ this.popEvt?.remove(); this.resetCombo(); hideCombo(); this.scene.pause(); saveScore('mole',this.score);
     if(this.score>=SETTINGS.rewardThreshold.mole && getBest('mole')>=SETTINGS.rewardThreshold.mole) toast(this,'🏅 Best reached — reward unlocked!');
-    const {width,height}=this.scale;
-    const msg=`Time!\nScore: ${this.score}\nClick to return`;
+    const {width,height}=this.scale; const msg=`Time!\nScore: ${this.score}\nClick to return`;
     const box=this.add.rectangle(width/2,height/2,width*.84,170,0x000000,.7);
     const txt=this.add.text(width/2,height/2,msg,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
-    [box,txt].forEach(el=>el.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.returnToMenu()));
-  }
+    [box,txt].forEach(el=>el.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.returnToMenu())); }
   returnToMenu(){ this.scene.stop(); showMenu(); }
 }
 
-/* ------------------------ Catch the Coins (coin + bomb + multiplier) ------------------------ */
 class CatchScene extends Phaser.Scene{
   constructor(){ super('catch'); this.score=0; this.timeLeft=25; this.rewarded=false; this.combo=0; this.comboTimer=null; this.multiplier=1; this.multTimer=null; }
   create(){
@@ -317,7 +288,6 @@ class CatchScene extends Phaser.Scene{
     makeRectTexture(this,'basketRect',180,26,0xffd86a);
 
     this.physics.world.setBounds(0,0,width,height);
-
     this.basket=this.physics.add.image(width/2,height-60,'basketRect').setImmovable(true);
     this.basket.body.allowGravity=false;
 
@@ -337,51 +307,38 @@ class CatchScene extends Phaser.Scene{
       if(!this.rewarded && getBest('catch')<SETTINGS.rewardThreshold.catch && this.score>=SETTINGS.rewardThreshold.catch) toast(this,'🎉 Reward unlocked!');
     });
 
-    // spawns
     this.time.addEvent({delay:520,loop:true,callback:()=>this.spawnFaller()});
-
     this.events.on('update',()=>this.items.children.iterate(c=>{ if(c&&c.y>height+60)c.destroy(); }));
-
     this.input.on('pointermove',p=>{ this.basket.x=Phaser.Math.Clamp(p.x,90,width-90); this.basket.body.updateFromGameObject(); });
     this.time.addEvent({delay:1000,loop:true,callback:()=>{ this.timeLeft--; this.timerText.setText(this.timeLeft+'s'); if(this.timeLeft<=0)this.endGame(); }});
     this.input.keyboard.on('keydown-ESC',()=>this.returnToMenu());
   }
-
   spawnFaller(){
     const w=this.scale.width, typeRand=Math.random();
     let key='emoji_coin', type='coin';
     if(typeRand<0.14){ key='emoji_bombSmall'; type='bomb'; }
     else if(typeRand>0.84){ key='emoji_star'; type='mult'; }
-
     const x=Phaser.Math.Between(40,w-40);
     const it=this.physics.add.image(x,-30,key).setData('type',type);
     it.setBounce(0).setVelocity(0,120).setMaxVelocity(430,1100).setCollideWorldBounds(false);
     this.items.add(it);
-
     const flash=this.add.rectangle(x,0,6,30,0xffffff).setAlpha(.7);
     this.tweens.add({targets:flash,alpha:0,y:60,duration:320,onComplete:()=>flash.destroy()});
   }
-
   activateMultiplier(seconds){
     this.multiplier=2; let left=seconds; showMult(left);
     clearInterval(this.multTimer);
     this.multTimer=setInterval(()=>{ left--; if(left>0){ showMult(left); } else { clearInterval(this.multTimer); this.multiplier=1; hideMult(); } },1000);
   }
-
-  bumpCombo(){
-    if(this.comboTimer){ this.combo=Math.min(this.combo+1,9); } else { this.combo=1; }
-    clearTimeout(this.comboTimer);
-    this.comboTimer=setTimeout(()=>{ this.combo=0; hideCombo(); },1500);
-    return this.combo>=5 ? 3 : this.combo>=3 ? 2 : 1;
-  }
+  bumpCombo(){ if(this.comboTimer){ this.combo=Math.min(this.combo+1,9); } else { this.combo=1; }
+    clearTimeout(this.comboTimer); this.comboTimer=setTimeout(()=>{ this.combo=0; hideCombo(); },1500);
+    return this.combo>=5 ? 3 : this.combo>=3 ? 2 : 1; }
   resetCombo(){ this.combo=0; clearTimeout(this.comboTimer); this.comboTimer=null; }
-
   endGame(){
     this.resetCombo(); hideCombo(); hideMult(); clearInterval(this.multTimer); this.multiplier=1;
     this.scene.pause(); saveScore('catch',this.score);
     if(this.score>=SETTINGS.rewardThreshold.catch && getBest('catch')>=SETTINGS.rewardThreshold.catch) toast(this,'🏅 Best reached — reward unlocked!');
-    const {width,height}=this.scale;
-    const msg=`Time!\nScore: ${this.score}\nClick to return`;
+    const {width,height}=this.scale; const msg=`Time!\nScore: ${this.score}\nClick to return`;
     const box=this.add.rectangle(width/2,height/2,width*.84,170,0x000000,.7);
     const txt=this.add.text(width/2,height/2,msg,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
     [box,txt].forEach(el=>el.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.returnToMenu()));
@@ -389,7 +346,6 @@ class CatchScene extends Phaser.Scene{
   returnToMenu(){ this.scene.stop(); showMenu(); }
 }
 
-/* ------------------------ Spin the Wheel (same as before, with sounds) ------------------------ */
 class WheelScene extends Phaser.Scene{
   constructor(){ super('wheel'); this.spinning=false; }
   create(){
@@ -451,12 +407,12 @@ const game=new Phaser.Game({
   physics:{default:'arcade',arcade:{debug:false}},
   scene:[MoleScene,CatchScene,WheelScene]
 });
-function start(mode){ hideMenu(); openStarter(mode); }
 
 const menu=document.getElementById('menu');
-function showMenu(){ hideCombo(); hideMult(); menu.style.display='grid'; }
+function showMenu(){ hideCombo(); hideMult(); menu.style.display='grid'; document.getElementById('backGameBtn').style.display='none'; }
 function hideMenu(){ menu.style.display='none'; }
 showMenu();
+
 document.querySelectorAll('#menu [data-mode]').forEach(b=>b.addEventListener('click',()=>{ hideMenu(); openStarter(b.dataset.mode); }));
 
 document.getElementById('claim').addEventListener('click',()=>{
@@ -471,7 +427,6 @@ document.getElementById('openLeaderboard').onclick=()=>{ renderLB('all'); lbOver
 document.getElementById('closeLB').onclick=()=>{ lbOverlay.style.display='none'; };
 document.getElementById('clearLB').onclick=()=>{ ['mole','catch','wheel'].forEach(g=>{localStorage.removeItem(`lb_${g}`); localStorage.removeItem(`best_${g}`);}); renderLB('all'); };
 document.querySelectorAll('#lbTabs [data-lb]').forEach(b=>b.onclick=()=>renderLB(b.dataset.lb));
-
 function renderLB(which){
   const games=which==='all'?['mole','catch','wheel']:[which];
   lbTables.innerHTML=games.map(g=>{
@@ -482,13 +437,12 @@ function renderLB(which){
   }).join('');
 }
 
-  <!-- Back to Menu button (visible during games) -->
-<button id="backGameBtn" style="
-  position:fixed; left:12px; top:12px; z-index:7;
-  background:#1b2040; color:#cfe1ff; border:1px solid #2b325d;
-  padding:8px 12px; border-radius:10px; font-weight:700; cursor:pointer; display:none;">
-  ← Menu
-</button>
+/* Back to menu while in-game */
+document.getElementById('backGameBtn').onclick=()=>{
+  Sound.click();
+  game.scene.getScenes(true).forEach(s => game.scene.stop(s.scene.key));
+  showMenu();
+};
 </script>
 </body>
 </html>
