@@ -68,7 +68,7 @@
   // ================== Utilities ==================
   const W = () => innerWidth, H = () => innerHeight;
   const SETTINGS = {
-    rewardThreshold: { dodge: 20, catch: 15 }, // auto reward when score >= threshold
+    rewardThreshold: { dodge: 20, catch: 15 },
     wheelDailyLimit: 3
   };
   const todayKey = () => new Date().toISOString().slice(0,10);
@@ -102,9 +102,25 @@
     return +localStorage.getItem(key) || 0;
   }
 
+  // ============ Helper to make simple textures for Physics Images ============
+  function makeRectTexture(scene, key, w, h, fill, stroke=0xffffff){
+    const g = scene.add.graphics();
+    g.fillStyle(fill, 1).fillRoundedRect(0,0,w,h,4);
+    g.lineStyle(2, stroke, 1).strokeRoundedRect(0,0,w,h,4);
+    g.generateTexture(key, w, h);
+    g.destroy();
+  }
+  function makeCircleTexture(scene, key, r, fill){
+    const g = scene.add.graphics();
+    g.fillStyle(fill, 1).fillCircle(r, r, r);
+    g.generateTexture(key, r*2, r*2);
+    g.destroy();
+  }
+
   // ================== Scenes ==================
+  // --------- Dodge (now using Physics Images) ----------
   class DodgeScene extends Phaser.Scene {
-    constructor(){ super('dodge'); this.score=0; this.timeLeft=30; this.speed=240; this.rewarded=false; }
+    constructor(){ super('dodge'); this.score=0; this.timeLeft=30; this.speed=300; this.rewarded=false; }
     create(){
       const { width, height } = this.scale;
       this.cameras.main.setBackgroundColor('#0a0718');
@@ -112,36 +128,41 @@
       this.scoreText = this.add.text(20, 16, 'Score: 0', { fontSize:'20px', color:'#8EFF98' });
       this.timerText = this.add.text(width-20, 16, this.timeLeft+'s', { fontSize:'20px', color:'#ffd86a' }).setOrigin(1,0);
 
-      // Player
-      this.player = this.add.rectangle(width/2, height-50, 64, 22, 0xffd86a).setStrokeStyle(2,0xffffff);
-      this.physics.add.existing(this.player);
-      this.player.body.setCollideWorldBounds(true);
+      // Textures & player
+      makeRectTexture(this, 'playerRect', 70, 22, 0xffd86a);
+      makeRectTexture(this, 'blockRect', 50, 16, 0x8a5dff);
 
+      this.player = this.physics.add.image(width/2, height-50, 'playerRect')
+        .setImmovable(false).setCollideWorldBounds(true);
+
+      // Controls
       this.cursors = this.input.keyboard.createCursorKeys();
-      this.input.on('pointermove', p => { this.player.x = Phaser.Math.Clamp(p.x, 32, width-32); });
+      this.input.on('pointermove', p => { this.player.x = Phaser.Math.Clamp(p.x, 35, width-35); });
 
-      // Obstacles (more frequent, larger)
-      this.obstacles = this.physics.add.group();
+      // Obstacles (physics images)
+      this.obstacles = this.physics.add.group({ allowGravity:false });
       this.time.addEvent({ delay: 450, loop: true, callback: () => {
         const x = Phaser.Math.Between(24, width-24);
-        const w = Phaser.Math.Between(28, 70);
-        const s = this.add.rectangle(x, -20, w, 16, 0x8a5dff);
-        this.physics.add.existing(s);
-        s.body.setVelocity(0, Phaser.Math.Between(180, 280));
-        this.obstacles.add(s);
+        const b = this.physics.add.image(x, -20, 'blockRect');
+        b.setVelocity(0, Phaser.Math.Between(200, 320));
+        b.setData('isObstacle', true);
+        this.obstacles.add(b);
       }});
 
+      // Clean up off-screen
+      this.events.on('update', () => {
+        this.obstacles.children.iterate(o => { if(o && o.y > height + 40) o.destroy(); });
+      });
+
+      // Overlap
       this.physics.add.overlap(this.player, this.obstacles, () => this.gameOver(), null, this);
 
       // Timer + scoring
       this.time.addEvent({ delay: 1000, loop:true, callback: () => {
         this.timeLeft--; this.timerText.setText(this.timeLeft+'s');
         this.score += 1; this.scoreText.setText('Score: '+this.score);
-
         if(!this.rewarded && this.score >= SETTINGS.rewardThreshold.dodge){
-          this.rewarded = true;
-          toast(this, '🎉 Reward unlocked!');
-          document.getElementById('claim').classList.add('pulse');
+          this.rewarded = true; toast(this, '🎉 Reward unlocked!'); document.getElementById('claim').classList.add('pulse');
         }
         if(this.timeLeft<=0) this.gameOver(true);
       }});
@@ -149,26 +170,22 @@
       this.input.keyboard.on('keydown-ESC', () => this.returnToMenu());
     }
     update(){
-      if(this.cursors.left.isDown) this.player.body.setVelocityX(-this.speed);
-      else if(this.cursors.right.isDown) this.player.body.setVelocityX(this.speed);
-      else this.player.body.setVelocityX(0);
+      if(this.cursors.left.isDown) this.player.setVelocityX(-this.speed);
+      else if(this.cursors.right.isDown) this.player.setVelocityX(this.speed);
+      else this.player.setVelocityX(0);
     }
     gameOver(timeUp=false){
-      this.scene.pause();
-      saveScore('dodge', this.score);
+      this.scene.pause(); saveScore('dodge', this.score);
       const { width, height } = this.scale;
       const msg = (timeUp ? 'Time! ' : 'Crashed! ') + `Score: ${this.score}\nClick to return`;
-      this.overlay(msg, ()=> this.returnToMenu());
-    }
-    overlay(message, onClick){
-      const { width, height } = this.scale;
       const box = this.add.rectangle(width/2, height/2, width*0.84, 170, 0x000000, 0.7);
-      const txt = this.add.text(width/2, height/2, message, { fontSize:'22px', color:'#fff', align:'center' }).setOrigin(0.5);
-      ;[box, txt].forEach(el=>el.setInteractive({useHandCursor:true}).on('pointerdown', onClick));
+      const txt = this.add.text(width/2, height/2, msg, { fontSize:'22px', color:'#fff', align:'center' }).setOrigin(0.5);
+      [box, txt].forEach(el=>el.setInteractive({useHandCursor:true}).on('pointerdown', ()=> this.returnToMenu()));
     }
     returnToMenu(){ this.scene.stop(); showMenu(); }
   }
 
+  // --------- Catch (now using Physics Images) ----------
   class CatchScene extends Phaser.Scene {
     constructor(){ super('catch'); this.score=0; this.timeLeft=30; this.rewarded=false; }
     create(){
@@ -178,37 +195,42 @@
       this.scoreText = this.add.text(20, 16, 'Score: 0', { fontSize:'20px', color:'#8EFF98' });
       this.timerText = this.add.text(width-20, 16, this.timeLeft+'s', { fontSize:'20px', color:'#ffd86a' }).setOrigin(1,0);
 
-      this.physics.world.setBounds(0,0,width,height);
+      // Textures
+      makeRectTexture(this, 'basketRect', 120, 20, 0xffd86a);
+      makeCircleTexture(this, 'coinCircle', 12, 0x56d0ff);
 
-      this.basket = this.add.rectangle(width/2, height-50, 120, 20, 0xffd86a).setStrokeStyle(2,0xffffff);
-      this.physics.add.existing(this.basket, true);
+      // Basket (immovable)
+      this.basket = this.physics.add.image(width/2, height-50, 'basketRect')
+        .setImmovable(true).setDepth(1);
+      this.basket.body.allowGravity = false;
 
-      this.coins = this.physics.add.group();
+      // Coins
+      this.coins = this.physics.add.group({ allowGravity:false });
       this.physics.add.overlap(this.basket, this.coins, (_, coin)=>{
         this.score++; this.scoreText.setText('Score: '+this.score); coin.destroy();
         if(!this.rewarded && this.score >= SETTINGS.rewardThreshold.catch){
-          this.rewarded = true;
-          toast(this, '🎉 Reward unlocked!');
-          document.getElementById('claim').classList.add('pulse');
+          this.rewarded = true; toast(this, '🎉 Reward unlocked!'); document.getElementById('claim').classList.add('pulse');
         }
       });
 
-      // Bigger, faster, more frequent coins so you can see them
       this.time.addEvent({ delay: 520, loop:true, callback: ()=>{
         const x = Phaser.Math.Between(24, width-24);
-        const r = Phaser.Math.Between(12, 18);
-        const coin = this.add.circle(x, -20, r, 0x56d0ff).setDepth(1);
-        this.physics.add.existing(coin);
-        coin.body.setVelocity(0, Phaser.Math.Between(180, 260));
-        coin.body.setCircle(r);
+        const coin = this.physics.add.image(x, -20, 'coinCircle');
+        coin.setVelocity(0, Phaser.Math.Between(200, 300));
         this.coins.add(coin);
       }});
 
+      this.events.on('update', () => {
+        this.coins.children.iterate(c => { if(c && c.y > height + 40) c.destroy(); });
+      });
+
+      // Pointer control
       this.input.on('pointermove', p=>{
         this.basket.x = Phaser.Math.Clamp(p.x, 60, width-60);
         this.basket.body.updateFromGameObject();
       });
 
+      // Timer
       this.time.addEvent({ delay:1000, loop:true, callback: ()=>{
         this.timeLeft--; this.timerText.setText(this.timeLeft+'s');
         if(this.timeLeft<=0) this.endGame();
@@ -217,17 +239,17 @@
       this.input.keyboard.on('keydown-ESC', () => this.returnToMenu());
     }
     endGame(){
-      this.scene.pause();
-      saveScore('catch', this.score);
+      this.scene.pause(); saveScore('catch', this.score);
       const { width, height } = this.scale;
       const msg = `Time!\nScore: ${this.score}\nClick to return`;
       const box = this.add.rectangle(width/2, height/2, width*0.84, 170, 0x000000, 0.7);
       const txt = this.add.text(width/2, height/2, msg, { fontSize:'22px', color:'#fff', align:'center' }).setOrigin(0.5);
-      ;[box, txt].forEach(el=>el.setInteractive({useHandCursor:true}).on('pointerdown', ()=> this.returnToMenu()));
+      [box, txt].forEach(el=>el.setInteractive({useHandCursor:true}).on('pointerdown', ()=> this.returnToMenu()));
     }
     returnToMenu(){ this.scene.stop(); showMenu(); }
   }
 
+  // --------- Wheel (unchanged visual, adds daily limit) ----------
   class WheelScene extends Phaser.Scene {
     constructor(){ super('wheel'); this.spinning=false; }
     create(){
@@ -285,7 +307,6 @@
           incSpinCount(); this.updateLimitText();
           const prize = prizes[target];
           toast(this, `You got: ${prize}`);
-          // tiny score for wheel to appear in LB (optional)
           saveScore('wheel', ['+10','+15','+20','+30','+50','x2','Jackpot'].indexOf(prize)+1);
         }
       });
@@ -322,7 +343,7 @@
   // Resize
   addEventListener('resize', () => game.scale.resize(W(), H()));
 
-  // ================== Leaderboard overlay ==================
+  // Leaderboard overlay
   const lbOverlay = document.getElementById('leaderboardOverlay');
   const lbTables = document.getElementById('lbTables');
   document.getElementById('openLeaderboard').onclick = () => { renderLB('all'); lbOverlay.style.display='grid'; };
@@ -334,7 +355,6 @@
   document.querySelectorAll('#lbTabs [data-lb]').forEach(b=>{
     b.onclick = () => renderLB(b.dataset.lb);
   });
-
   function renderLB(which){
     const games = which==='all' ? ['dodge','catch','wheel'] : [which];
     lbTables.innerHTML = games.map(g=>{
