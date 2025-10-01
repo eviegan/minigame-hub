@@ -155,7 +155,7 @@ function hideCombo(){ comboChip.style.display='none'; }
 function showMult(sec){ multChip.textContent=`×2 active (${sec}s)`; multChip.style.display='block'; }
 function hideMult(){ multChip.style.display='none'; }
 
-/* ------------------------ Start overlay per game ------------------------ */
+/* ------- Start overlay per game (fixed) ------- */
 let pendingMode=null;
 const starter = document.getElementById('starter');
 const startBtn = document.getElementById('startBtn');
@@ -175,14 +175,46 @@ function openStarter(mode){
 }
 function closeStarter(){ starter.style.display='none'; countdownEl.style.display='none'; }
 
+/* Actually launch a Phaser scene */
+function startScene(mode){
+  // stop any running scenes
+  game.scene.getScenes(true).forEach(s => game.scene.stop(s.scene.key));
+  game.scene.start(mode);
+  // show the in-game back button
+  document.getElementById('backGameBtn').style.display='inline-block';
+}
+
 startBtn.onclick = () => {
   Sound.click();
-  // 3-2-1
+  // 3-2-1 countdown then start
   countdownEl.style.display='block';
   let n=3; countdownEl.textContent=n;
-  const iv=setInterval(()=>{ n--; if(n>0){ countdownEl.textContent=n; } else { clearInterval(iv); closeStarter(); start(pendingMode); } }, 700);
+  const iv=setInterval(()=>{
+    n--;
+    if(n>0){ countdownEl.textContent=n; }
+    else { clearInterval(iv); closeStarter(); startScene(pendingMode); }
+  }, 700);
 };
 backBtn.onclick = () => { Sound.click(); starter.style.display='none'; showMenu(); };
+
+/* Menu launches the starter */
+document.querySelectorAll('#menu [data-mode]').forEach(b=>{
+  b.addEventListener('click',()=>{ hideMenu(); openStarter(b.dataset.mode); });
+});
+
+/* Back to menu while in-game */
+const backGameBtn=document.getElementById('backGameBtn');
+backGameBtn.onclick=()=>{
+  Sound.click();
+  // stop scenes, hide button, show menu
+  game.scene.getScenes(true).forEach(s => game.scene.stop(s.scene.key));
+  backGameBtn.style.display='none';
+  showMenu();
+};
+
+/* Also hide the in-game back button when menu shows */
+function showMenu(){ hideCombo(); hideMult(); menu.style.display='grid'; backGameBtn.style.display='none'; }
+function hideMenu(){ menu.style.display='none'; }
 
 /* ------------------------ Whack-a-Mole (animals + bomb + combo) ------------------------ */
 class MoleScene extends Phaser.Scene{
@@ -449,6 +481,14 @@ function renderLB(which){
       <table><thead><tr><th>#</th><th>Score</th><th>When</th></tr></thead><tbody>${body}</tbody></table>`;
   }).join('');
 }
+
+  <!-- Back to Menu button (visible during games) -->
+<button id="backGameBtn" style="
+  position:fixed; left:12px; top:12px; z-index:7;
+  background:#1b2040; color:#cfe1ff; border:1px solid #2b325d;
+  padding:8px 12px; border-radius:10px; font-weight:700; cursor:pointer; display:none;">
+  ← Menu
+</button>
 </script>
 </body>
 </html>
