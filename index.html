@@ -134,117 +134,109 @@ function makeEmojiTexture(s,k,emoji,size=48){ /* ✅ correct API */
   s.textures.addCanvas(k,c);
 }
 
-/* ============== Scenes ============== */
+/* ------------------------ Whack-a-Mole (safe version) ------------------------ */
 class MoleScene extends Phaser.Scene{
-  constructor(){super('mole');this.score=0;this.tl=SETTINGS.mole.duration;this.holes=[];this.combo=0;this.ct=null}
+  constructor(){ super('mole'); this.score=0; this.tl=SETTINGS.mole.duration; this.holes=[]; this.combo=0; this.ct=null; }
   create(){
     const {width:w,height:h}=this.scale; this.cameras.main.setBackgroundColor('#0a0718');
     this.add.text(w/2,28,'🎯 Whack-a-Mole',{fontSize:'24px',color:'#fff'}).setOrigin(.5);
-    this.sc=this.add.text(20,16,'0',{fontSize:'20px',color:'#8EFF98'}); this.tm=this.add.text(w-20,16,this.tl+'s',{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
+    this.sc=this.add.text(20,16,'0',{fontSize:'20px',color:'#8EFF98'}); 
+    this.tm=this.add.text(w-20,16,this.tl+'s',{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
 
+    // textures
     ['emoji_hamster','emoji_cat','emoji_dog','emoji_rabbit'].forEach((k,i)=>makeEmojiTexture(this,k,['🐹','🐱','🐶','🐰'][i],64));
-    makeEmojiTexture(this,'emoji_bomb','💣',64); makeRectTexture(this,'holePlate',96,28,0x1b2040,0x2b325d);
+    makeEmojiTexture(this,'emoji_bomb','💣',64);
+    makeRectTexture(this,'holePlate',96,28,0x1b2040,0x2b325d);
 
+    // grid
     const cols=(Math.min(w,h)<720)?SETTINGS.mole.gridSmall:SETTINGS.mole.gridLarge;
     const rows=cols, gridW=Math.min(w*.9,h*.78), cell=gridW/cols, sx=w/2-gridW/2+cell/2, sy=h*.2+cell/2;
     const animals=['emoji_hamster','emoji_cat','emoji_dog','emoji_rabbit'];
 
     for(let r=0;r<rows;r++){
       for(let c=0;c<cols;c++){
-        const x=sx+c*cell,y=sy+r*cell;
+        const x=sx+c*cell, y=sy+r*cell;
         const plate=this.add.image(x,y+20,'holePlate');
-        const face=this.add.image(x,y,'emoji_hamster').setVisible(false).setInteractive({useHandCursor:true});
+        const face=this.add.image(x,y,'emoji_hamster')
+          .setVisible(false)
+          .setScale(1)
+          .setInteractive({useHandCursor:true});
+
         face.on('pointerdown',()=>{
-          if(!face.visible)return;
-          if(face.getData('type')==='bomb'){
+          // guard: ignore if already hidden or mid-swap
+          if(!face.visible) return;
+
+          const isBomb = face.getData('type')==='bomb';
+          // give a tiny scale pulse instead of a tween that moves/depends on y
+          face.setScale(0.9);
+          this.time.delayedCall(90,()=>{ if (face.visible) face.setScale(1); });
+
+          if(isBomb){
             this.cameras.main.shake(120,.003); Sound.boom();
             this.score=Math.max(0,this.score-2); this.resetCombo(); hideCombo();
           }else{
             const m=this.bump(); Sound.pop(); this.score+=m; showCombo(m);
           }
+          // hide immediately; no tweens on a possibly invalid target
+          face.setVisible(false);
           this.sc.setText(this.score);
-          this.tweens.add({targets:face,y:face.y-12,duration:90,yoyo:true,onComplete:()=>face.setVisible(false)});
         });
+
         this.holes.push({plate,face});
       }
     }
 
-    this.pop=this.time.addEvent({delay:SETTINGS.mole.popEvery,loop:true,callback:()=>{
-      const free=this.holes.filter(h=>!h.face.visible); if(!free.length)return;
-      const h=Phaser.Utils.Array.GetRandom(free);
-      const bomb=Math.random()<.18, tex=bomb?'emoji_bomb':Phaser.Utils.Array.GetRandom(animals);
-      h.face.setTexture(tex).setData('type',bomb?'bomb':'animal'); h.face.y=h.plate.y; h.face.setVisible(true);
-      this.tweens.add({targets:h.face,y:h.plate.y-28,duration:110});
-      this.time.delayedCall(SETTINGS.mole.upTime,()=>{if(h.face.visible)this.tweens.add({targets:h.face,y:h.plate.y+24,duration:150,onComplete:()=>h.face.setVisible(false)})});
-    }});
+    // pop loop (safe show/hide)
+    this.pop=this.time.addEvent({
+      delay:SETTINGS.mole.popEvery, loop:true, callback:()=>{
+        const free=this.holes.filter(h=>!h.face.visible); if(!free.length) return;
+        const h=Phaser.Utils.Array.GetRandom(free);
 
-    this.clock=this.time.addEvent({delay:1000,loop:true,callback:()=>{this.tl--;this.tm.setText(this.tl+'s');if(this.tl<=0)this.end()}});
+        const isBomb=Math.random()<.18;
+        const tex=isBomb ? 'emoji_bomb' : Phaser.Utils.Array.GetRandom(animals);
+        h.face.setTexture(tex).setData('type', isBomb?'bomb':'animal');
+        h.face.setScale(1).setVisible(true);
+
+        // simple “pop” effect by scaling up and back; no position tweens
+        h.face.setScale(0.85);
+        this.time.delayedCall(100,()=>{ if(h.face.visible) h.face.setScale(1); });
+
+        // auto hide after upTime if still visible
+        this.time.delayedCall(SETTINGS.mole.upTime,()=>{ if(h.face.visible) h.face.setVisible(false); });
+      }
+    });
+
+    // timer
+    this.clock=this.time.addEvent({
+      delay:1000, loop:true,
+      callback:()=>{
+        this.tl--; this.tm.setText(this.tl+'s');
+        if(this.tl<=0) this.end();
+      }
+    });
+
     this.input.keyboard.on('keydown-ESC',()=>this.menu());
   }
-  bump(){ if(this.ct){this.combo=Math.min(this.combo+1,9)}else{this.combo=1}
-    clearTimeout(this.ct); this.ct=setTimeout(()=>{this.combo=0;hideCombo()},1500);
+
+  bump(){ 
+    if(this.ct){ this.combo=Math.min(this.combo+1,9); } else { this.combo=1; }
+    clearTimeout(this.ct);
+    this.ct=setTimeout(()=>{ this.combo=0; hideCombo(); },1500);
     return this.combo>=5?3:this.combo>=3?2:1;
   }
   resetCombo(){ this.combo=0; clearTimeout(this.ct); this.ct=null; }
-  end(){ this.pop?.remove(); this.resetCombo(); hideCombo(); this.scene.pause(); saveScore('mole',this.score);
-    const {width:w,height:h}=this.scale; const box=this.add.rectangle(w/2,h/2,w*.84,170,0x000000,.7);
+
+  end(){
+    this.pop?.remove(); this.clock?.remove(); this.resetCombo(); hideCombo();
+    this.scene.pause(); saveScore('mole',this.score);
+    const {width:w,height:h}=this.scale;
+    const box=this.add.rectangle(w/2,h/2,w*.84,170,0x000000,.7);
     const t=this.add.text(w/2,h/2,`Time!\nScore: ${this.score}\nClick to return`,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
     [box,t].forEach(e=>e.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.menu()));
   }
   menu(){ this.scene.stop(); showMenu(); }
 }
 
-class CatchScene extends Phaser.Scene{
-  constructor(){super('catch');this.score=0;this.tl=25;this.combo=0;this.ct=null;this.mult=1;this.mt=null}
-  create(){
-    const {width:w,height:h}=this.scale; this.cameras.main.setBackgroundColor('#0a0718');
-    this.add.text(w/2,28,'🧺 Catch the Coins',{fontSize:'24px',color:'#fff'}).setOrigin(.5);
-    this.sc=this.add.text(20,16,'0',{fontSize:'20px',color:'#8EFF98'}); this.tm=this.add.text(w-20,16,this.tl+'s',{fontSize:'20px',color:'#ffd86a'}).setOrigin(1,0);
-
-    makeEmojiTexture(this,'emoji_coin','🪙',52);
-    makeEmojiTexture(this,'emoji_bombSmall','🧨',52);
-    makeEmojiTexture(this,'emoji_star','✨',52);
-    makeRectTexture(this,'basketRect',180,26,0xffd86a);
-
-    this.physics.world.setBounds(0,0,w,h);
-    this.basket=this.physics.add.image(w/2,h-60,'basketRect').setImmovable(true);
-    this.basket.body.allowGravity=false;
-
-    this.items=this.physics.add.group({allowGravity:true,gravityY:750});
-    this.physics.add.overlap(this.basket,this.items,(_,it)=>{
-      const t=it.getData('type');
-      if(t==='coin'){ const m=this.bump()*this.mult; Sound.pop(); this.score+=m; showCombo(m); }
-      else if(t==='bomb'){ Sound.boom(); this.score=Math.max(0,this.score-3); this.cameras.main.shake(120,.003); this.reset(); hideCombo(); }
-      else { Sound.ding(); this.boost(6); }
-      this.sc.setText(this.score); it.destroy();
-    });
-
-    this.time.addEvent({delay:520,loop:true,callback:()=>this.drop()});
-    this.events.on('update',()=>this.items.children.iterate(c=>{if(c&&c.y>h+60)c.destroy()}));
-    this.input.on('pointermove',p=>{this.basket.x=Phaser.Math.Clamp(p.x,90,w-90);this.basket.body.updateFromGameObject()});
-    this.clock=this.time.addEvent({delay:1000,loop:true,callback:()=>{this.tl--;this.tm.setText(this.tl+'s');if(this.tl<=0)this.end()}});
-    this.input.keyboard.on('keydown-ESC',()=>this.menu());
-  }
-  drop(){ const w=this.scale.width, r=Math.random(); let k='emoji_coin', t='coin';
-    if(r<.14){k='emoji_bombSmall';t='bomb'} else if(r>.84){k='emoji_star';t='mult'}
-    const x=Phaser.Math.Between(40,w-40); const it=this.physics.add.image(x,-30,k).setData('type',t);
-    it.setVelocity(0,120).setMaxVelocity(430,1100); this.items.add(it);
-  }
-  boost(s){ this.mult=2; let left=s; showMult(left);
-    clearInterval(this.mt); this.mt=setInterval(()=>{left--; if(left>0) showMult(left); else {clearInterval(this.mt); this.mult=1; hideMult();}},1000);
-  }
-  bump(){ if(this.ct){this.combo=Math.min(this.combo+1,9)} else {this.combo=1}
-    clearTimeout(this.ct); this.ct=setTimeout(()=>{this.combo=0;hideCombo()},1500);
-    return this.combo>=5?3:this.combo>=3?2:1;
-  }
-  reset(){ this.combo=0; clearTimeout(this.ct); this.ct=null; }
-  end(){ this.reset(); hideCombo(); hideMult(); clearInterval(this.mt); this.mult=1; this.scene.pause(); saveScore('catch',this.score);
-    const {width:w,height:h}=this.scale; const box=this.add.rectangle(w/2,h/2,w*.84,170,0x000000,.7);
-    const t=this.add.text(w/2,h/2,`Time!\nScore: ${this.score}\nClick to return`,{fontSize:'22px',color:'#fff',align:'center'}).setOrigin(.5);
-    [box,t].forEach(e=>e.setInteractive({useHandCursor:true}).on('pointerdown',()=>this.menu()));
-  }
-  menu(){ this.scene.stop(); showMenu(); }
-}
 
 class WheelScene extends Phaser.Scene{
   constructor(){super('wheel');this.spinning=false}
